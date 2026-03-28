@@ -1,0 +1,1462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PersonaForge AI — Face Swap Engine</title>
+  <meta name="description" content="Production-grade AI face swapping powered by GPU acceleration. Upload a face, choose quality, and transform any video." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="icon" type="image/jpeg" href="static/assets/logo.jpeg" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── Reset & Tokens ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #05060a;
+      --bg2:        #080c14;
+      --surface:    rgba(12, 16, 28, 0.85);
+      --glass:      rgba(255,255,255,0.035);
+      --glass-hi:   rgba(255,255,255,0.07);
+      --border:     rgba(255,255,255,0.07);
+      --border-hi:  rgba(0,242,254,0.3); /* Neon Cyan */
+      --border-ok:  rgba(0,230,140,0.35);
+      --border-warn:rgba(255,180,0,0.35);
+      --accent:     #00f2fe; /* Neon Cyan */
+      --accent2:    #a855f7; /* Purple */
+      --green:      #00e690;
+      --warn:       #ffb800;
+      --error:      #ff4a6b;
+      --text:       #e0e8f0;
+      --muted:      #5a7a9a;
+      --mono:       'JetBrains Mono', monospace;
+      --sans:       'Space Grotesk', sans-serif;
+      --r:           10px;
+      --r-sm:        6px;
+      --shadow:      0 8px 40px rgba(0,0,0,0.6);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Animated gradient background */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 10% 20%, rgba(0,242,254,0.08) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 90% 80%, rgba(168,85,247,0.08) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 40% at 50% 50%, rgba(0,230,144,0.03) 0%, transparent 70%);
+      animation: bgPulse 8s ease-in-out infinite alternate;
+      pointer-events: none;
+    }
+    @keyframes bgPulse {
+      from { opacity: 0.6; }
+      to   { opacity: 1; }
+    }
+
+    /* Scanline noise */
+    body::after {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+      pointer-events: none;
+    }
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
+    .shell {
+      position: relative; z-index: 1;
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 40px 20px 100px;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────── */
+    header {
+      display: flex; align-items: center; gap: 20px;
+      margin-bottom: 52px;
+      padding-bottom: 28px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand-logo {
+      width: 52px; height: 52px; flex-shrink: 0;
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+    }
+    .brand-logo img {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+
+    .brand-ring {
+      position: absolute; inset: -8px;
+      border-radius: 50%;
+      border: 1.5px solid var(--accent);
+      animation: spin 8s linear infinite;
+      opacity: 0.4;
+    }
+    .brand-ring2 {
+      position: absolute; inset: -14px;
+      border-radius: 50%;
+      border: 1px dashed var(--accent2);
+      animation: spin 14s linear infinite reverse;
+      opacity: 0.25;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .brand-text { line-height: 1.1; }
+    .brand-name {
+      font-size: 36px; font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(120deg, #fff 0%, var(--accent) 40%, var(--accent2) 100%);
+      background-clip: text;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-size: 200% auto;
+      animation: shimmer 4s linear infinite;
+    }
+    @keyframes shimmer { to { background-position: 200% center; } }
+    .brand-sub {
+      font-family: var(--mono);
+      font-size: 10.5px; letter-spacing: 2.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .header-right {
+      margin-left: auto;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .gpu-pill {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 10px; letter-spacing: 1px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .gpu-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--muted);
+    }
+    .gpu-pill.active { color: var(--green); border-color: var(--border-ok); }
+    .gpu-pill.active .gpu-dot { background: var(--green); animation: blink 1.2s ease-in-out infinite; }
+
+    /* ── Step Label ──────────────────────────────────────────────────── */
+    .step-label {
+      font-family: var(--mono);
+      font-size: 9.5px; letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 10px;
+      opacity: 0.8;
+    }
+
+    /* ── Glass Card ──────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 28px;
+      margin-bottom: 20px;
+      transition: border-color .25s, box-shadow .25s;
+      position: relative; overflow: hidden;
+    }
+    .card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0;
+      transition: opacity .3s;
+    }
+    .card:hover { border-color: var(--border-hi); box-shadow: var(--shadow); }
+    .card:hover::before { opacity: 1; }
+
+    .card-title { font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 3px; }
+    .card-sub   { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+
+    /* ── Upload Row ──────────────────────────────────────────────────── */
+    .upload-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    }
+
+    .drop-zone {
+      position: relative; overflow: hidden;
+      border: 1.5px dashed rgba(255,255,255,0.12);
+      border-radius: var(--r);
+      padding: 32px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s, transform .15s;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(77,159,255,0.05);
+      transform: translateY(-2px);
+    }
+    .drop-zone.has-file {
+      border-color: var(--green);
+      background: rgba(0,230,144,0.04);
+    }
+    .drop-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+
+    .drop-icon { font-size: 30px; margin-bottom: 8px; opacity: 0.7; }
+    .drop-title { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 3px; }
+    .drop-hint  { font-size: 11px; color: var(--muted); }
+    .file-preview {
+      margin-top: 8px;
+      font-family: var(--mono); font-size: 10px;
+      color: var(--green); word-break: break-all;
+    }
+    .thumb-wrap { margin-top: 8px; }
+    .thumb-wrap img {
+      max-height: 80px; border-radius: var(--r-sm);
+      border: 1px solid var(--border-hi); object-fit: cover;
+    }
+
+    /* ── Quality Selector ────────────────────────────────────────────── */
+    .quality-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+      margin-bottom: 20px;
+    }
+    .q-pill {
+      position: relative;
+      padding: 14px 12px;
+      border-radius: var(--r);
+      border: 1.5px solid var(--border);
+      background: var(--glass);
+      cursor: pointer;
+      transition: border-color .2s, background .2s, transform .15s;
+      text-align: center;
+      user-select: none;
+    }
+    .q-pill:hover { border-color: var(--border-hi); transform: translateY(-1px); }
+    .q-pill input[type="radio"] { position: absolute; opacity: 0; }
+    .q-pill.selected {
+      border-color: var(--accent);
+      background: rgba(77,159,255,0.1);
+    }
+    .q-pill.selected .q-icon { filter: none; }
+    .q-icon { font-size: 22px; margin-bottom: 4px; filter: grayscale(0.5); }
+    .q-name { font-size: 12px; font-weight: 600; color: #fff; letter-spacing: 0.5px; }
+    .q-desc { font-size: 10px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+    .q-badge {
+      font-family: var(--mono); font-size: 9px; letter-spacing: 1px;
+      padding: 2px 7px; border-radius: 999px;
+      display: inline-block; margin-top: 5px;
+    }
+    .q-badge.green  { background: rgba(0,230,144,0.12); color: var(--green); }
+    .q-badge.blue   { background: rgba(77,159,255,0.12); color: var(--accent); }
+    .q-badge.purple { background: rgba(168,85,247,0.12); color: var(--accent2); }
+
+    /* ── Multi-face row ──────────────────────────────────────────────── */
+    .options-row {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+      margin-top: 14px; margin-bottom: 4px;
+    }
+    .mode-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .mode-pill {
+      position: relative;
+      padding: 12px;
+      border-radius: var(--r-sm);
+      border: 1.5px solid var(--border);
+      background: var(--glass);
+      cursor: pointer;
+      transition: border-color .2s, background .2s, transform .15s;
+      user-select: none;
+    }
+    .mode-pill:hover { border-color: var(--border-hi); transform: translateY(-1px); }
+    .mode-pill input[type="radio"] { position: absolute; opacity: 0; }
+    .mode-pill.selected { border-color: var(--accent); background: rgba(77,159,255,0.1); }
+    .mode-name { font-size: 12px; font-weight: 600; color: #fff; }
+    .mode-desc { font-size: 10px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+    .toggle-wrap {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--muted);
+      cursor: pointer; user-select: none;
+    }
+    .toggle-wrap input { display: none; }
+    .toggle {
+      width: 36px; height: 20px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 10px; position: relative;
+      transition: background .2s;
+    }
+    .toggle::after {
+      content: '';
+      position: absolute; left: 3px; top: 3px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--muted);
+      transition: transform .2s, background .2s;
+    }
+    .toggle-wrap input:checked ~ .toggle { background: var(--accent); }
+    .toggle-wrap input:checked ~ .toggle::after { transform: translateX(16px); background: #fff; }
+
+    /* ── Buttons ─────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-family: var(--sans); font-size: 14px; font-weight: 600;
+      letter-spacing: 0.3px;
+      padding: 12px 28px;
+      border: none; border-radius: var(--r);
+      cursor: pointer; transition: all .2s;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(0,242,254,0.25);
+    }
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(77,159,255,0.45);
+    }
+    .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+    .btn-ghost {
+      background: var(--glass);
+      color: var(--accent);
+      border: 1.5px solid var(--border-hi);
+    }
+    .btn-ghost:hover { background: rgba(77,159,255,0.1); transform: translateY(-1px); }
+    .btn-green {
+      background: linear-gradient(135deg, var(--green), #00b856);
+      color: #000; font-weight: 700;
+      box-shadow: 0 4px 20px rgba(0,230,144,0.25);
+    }
+    .btn-green:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,230,144,0.4); }
+    .btn-danger {
+      background: linear-gradient(135deg, var(--error), #c73c54);
+      color: #fff;
+    }
+    .btn-sm { padding: 8px 18px; font-size: 12px; }
+
+    /* ── Staged Progress ─────────────────────────────────────────────── */
+    .stages-row {
+      display: flex; gap: 6px; margin-bottom: 16px;
+    }
+    .stage-item {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px;
+    }
+    .stage-bar {
+      height: 4px; width: 100%; border-radius: 2px;
+      background: rgba(255,255,255,0.06);
+      overflow: hidden; position: relative;
+    }
+    .stage-fill {
+      height: 100%; width: 0%;
+      border-radius: 2px;
+      transition: width .5s ease;
+    }
+    .stage-item.s-uploading  .stage-fill { background: var(--accent2); }
+    .stage-item.s-processing .stage-fill { background: var(--accent); }
+    .stage-item.s-enhancing  .stage-fill { background: #f59e0b; }
+    .stage-item.s-rendering  .stage-fill { background: var(--green); }
+    .stage-item.s-done       .stage-fill { background: var(--green); }
+
+    .stage-label {
+      font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px;
+      text-transform: uppercase; color: var(--muted);
+      transition: color .3s;
+    }
+    .stage-item.active .stage-label { color: var(--text); }
+
+    .progress-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .progress-pct  { font-family: var(--mono); font-size: 14px; color: var(--accent); }
+    .progress-log  {
+      font-family: var(--mono); font-size: 11px; color: var(--muted);
+      min-height: 16px; margin-bottom: 12px;
+      word-break: break-all;
+    }
+
+    /* Log console */
+    .log-console {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      padding: 10px 12px;
+      height: 100px; overflow-y: auto;
+      font-family: var(--mono); font-size: 10px; line-height: 1.7;
+      color: #5a7a9a;
+    }
+    .log-console .log-line { margin-bottom: 1px; }
+    .log-console .log-line.ok  { color: var(--green); }
+    .log-console .log-line.err { color: var(--error); }
+    .log-console .log-line.info { color: var(--accent); }
+
+    /* ── Badge ───────────────────────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px;
+      font-family: var(--mono); font-size: 10px; letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .badge-queued   { background: rgba(255,184,0,0.1);   color: var(--warn); }
+    .badge-running  { background: rgba(77,159,255,0.1); color: var(--accent); }
+    .badge-done     { background: rgba(0,230,144,0.1);  color: var(--green); }
+    .badge-error    { background: rgba(255,74,107,0.1); color: var(--error); }
+    .badge-running .dot { animation: blink 1s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+    /* ── Preview Player ──────────────────────────────────────────────── */
+    .preview-section { display: none; }
+    .preview-section.visible { display: block; }
+
+    .video-wrap {
+      position: relative;
+      border-radius: var(--r);
+      overflow: hidden;
+      background: #000;
+      border: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    .video-wrap video {
+      width: 100%; display: block;
+      max-height: min(72vh, 560px); object-fit: contain;
+    }
+
+    .preview-actions {
+      display: flex; gap: 10px; flex-wrap: wrap;
+    }
+
+    .result-section { display: none; }
+    .result-section.visible { display: block; }
+
+    .result-actions {
+      display: flex; gap: 10px; flex-wrap: wrap;
+    }
+
+    /* ── Warning Toast ───────────────────────────────────────────────── */
+    .toast {
+      display: none; position: fixed;
+      bottom: 28px; right: 28px; z-index: 9999;
+      background: var(--surface);
+      border: 1px solid var(--border-warn);
+      border-radius: var(--r);
+      padding: 14px 18px;
+      max-width: 340px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+      font-size: 12px;
+      animation: slideIn .3s ease;
+    }
+    .toast.visible { display: flex; align-items: flex-start; gap: 10px; }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .toast-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+    .toast-title { font-weight: 600; color: var(--warn); margin-bottom: 3px; font-size: 13px; }
+    .toast-close {
+      margin-left: auto; cursor: pointer; font-size: 16px;
+      opacity: 0.5; flex-shrink: 0; background: none; border: none; color: inherit;
+    }
+    .toast-close:hover { opacity: 1; }
+
+    /* ── Download Block ──────────────────────────────────────────────── */
+    .download-block {
+      display: none;
+      margin-top: 18px;
+      padding: 18px;
+      border: 1px solid var(--border-ok);
+      border-radius: var(--r);
+      background: rgba(0,230,144,0.04);
+    }
+    .download-block.visible { display: block; }
+    .download-info {
+      font-family: var(--mono); font-size: 11px;
+      color: var(--green); margin-bottom: 14px;
+    }
+    .download-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    /* ── Job History ─────────────────────────────────────────────────── */
+    .history-card { display: none; }
+    .history-card.visible { display: block; }
+    .history-list { display: flex; flex-direction: column; gap: 8px; }
+    .history-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px;
+      border-radius: var(--r-sm);
+      background: var(--glass);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      transition: border-color .2s;
+    }
+    .history-item:hover { border-color: var(--border-hi); }
+    .history-thumb {
+      width: 48px; height: 30px;
+      background: rgba(0,0,0,.5);
+      border-radius: 4px;
+      object-fit: cover;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .history-info { flex: 1; min-width: 0; }
+    .history-id   { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-bottom: 1px; }
+    .history-msg  { font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .history-time { font-family: var(--mono); font-size: 9px; color: var(--muted); margin-left: auto; white-space: nowrap; }
+
+    /* ── Error Box ───────────────────────────────────────────────────── */
+    .error-box {
+      display: none;
+      background: rgba(255,74,107,0.06);
+      border: 1px solid rgba(255,74,107,0.3);
+      border-radius: var(--r);
+      padding: 12px 16px;
+      font-family: var(--mono); font-size: 11.5px;
+      color: var(--error); margin-top: 12px;
+      line-height: 1.6;
+    }
+    .error-box.visible { display: block; }
+
+    /* ── Divider ─────────────────────────────────────────────────────── */
+    .divider { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+
+    /* ── Footer ──────────────────────────────────────────────────────── */
+    /* ── Main Footer ─────────────────────────────────────────────────── */
+    .main-footer {
+      background: #0b101a;
+      border-top: 1px solid var(--border);
+      padding: 60px 0 0;
+      margin-top: 80px;
+      color: var(--text);
+    }
+    .footer-content {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 0 20px 48px;
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr;
+      gap: 40px;
+    }
+    .footer-col h4 {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #fff;
+      margin-bottom: 20px;
+    }
+    .footer-logo-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .footer-logo-img {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .col-brand .footer-logo {
+      font-size: 20px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #fff, var(--accent));
+      background-clip: text;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      margin-bottom: 0;
+    }
+    .footer-tagline {
+      font-size: 13px;
+      color: var(--muted);
+      max-width: 280px;
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+    .credibility-tags {
+      display: flex;
+      gap: 8px;
+    }
+    .tag {
+      font-family: var(--mono);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 4px 10px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .col-nav ul {
+      list-style: none;
+    }
+    .col-nav ul li {
+      margin-bottom: 10px;
+    }
+    .col-nav ul li a, .footer-social-links a {
+      font-size: 13px;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.2s, transform 0.2s;
+      display: inline-block;
+    }
+    .col-nav ul li a:hover, .footer-social-links a:hover {
+      color: var(--accent);
+      transform: translateX(4px);
+    }
+    .footer-social-links {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .footer-social-links a:hover {
+      transform: translateX(4px);
+    }
+
+    .footer-bottom {
+      border-top: 1px solid var(--border);
+      padding: 24px 20px;
+      background: rgba(0,0,0,0.2);
+    }
+    .footer-bottom-content {
+      max-width: 920px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--muted);
+      letter-spacing: 0.5px;
+    }
+    .footer-bottom-content b {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    /* ── Responsive ──────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .footer-content {
+        grid-template-columns: 1fr;
+        gap: 32px;
+        text-align: center;
+      }
+      .footer-tagline {
+        margin: 0 auto 20px;
+      }
+      .credibility-tags {
+        justify-content: center;
+      }
+      .footer-bottom-content {
+        flex-direction: column;
+        gap: 10px;
+      }
+      .col-nav ul li a:hover, .footer-social-links a:hover {
+        transform: translateY(-2px);
+      }
+    }
+
+
+    /* ── Fade-in ─────────────────────────────────────────────────────── */
+    .fade-in { animation: fadeIn .4s ease both; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+  </style>
+</head>
+
+<body>
+<div class="shell">
+
+  <!-- ── Header ──────────────────────────────────────────────────────── -->
+  <header>
+    <div class="brand-logo">
+      <div class="brand-ring"></div>
+      <div class="brand-ring2"></div>
+      <img src="static/assets/logo.jpeg" alt="PersonaForge Logo">
+    </div>
+    <div class="brand-text">
+      <div class="brand-name">PersonaForge AI</div>
+      <div class="brand-sub">GPU Face Swap Engine · v2.0</div>
+    </div>
+    <div class="header-right">
+      <div class="gpu-pill" id="gpuPill">
+        <span class="gpu-dot"></span>
+        <span id="gpuLabel">Detecting…</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Step 1: Upload ──────────────────────────────────────────────── -->
+  <div class="step-label" id="how-it-works">01 — Upload Files</div>
+  <div class="card fade-in">
+    <div class="card-title">Source &amp; Target</div>
+    <div class="card-sub">Upload a clear frontal face photo and the target video to process.</div>
+
+    <div class="upload-row">
+      <!-- Face Image -->
+      <div class="drop-zone" id="imgZone">
+        <input type="file" id="imgInput" accept=".jpg,.jpeg,.png,.webp" />
+        <div class="drop-icon">🖼️</div>
+        <div class="drop-title">Face Image</div>
+        <div class="drop-hint">JPG · PNG · WEBP</div>
+        <div class="file-preview" id="imgName"></div>
+        <div class="thumb-wrap" id="imgThumb"></div>
+      </div>
+
+      <!-- Target Video -->
+      <div class="drop-zone" id="vidZone">
+        <input type="file" id="vidInput" accept=".mp4,.mov,.avi,.mkv,.webm" />
+        <div class="drop-icon">🎬</div>
+        <div class="drop-title">Target Video</div>
+        <div class="drop-hint">MP4 · MOV · AVI · MKV</div>
+        <div class="file-preview" id="vidName"></div>
+      </div>
+    </div>
+
+    <div class="options-row" style="margin-top:20px;">
+      <button class="btn btn-primary" id="uploadBtn" disabled onclick="doUpload()">
+        ↑ Upload Files
+      </button>
+      <div id="uploadStatus" style="font-family:var(--mono);font-size:11px;color:var(--muted);"></div>
+    </div>
+    <div class="error-box" id="uploadError"></div>
+  </div>
+
+  <!-- ── Step 2: Quality & Options ───────────────────────────────────── -->
+  <div class="step-label" id="features">02 — Quality Settings</div>
+  <div class="card fade-in">
+    <div class="card-title">Processing Mode</div>
+    <div class="card-sub">Choose quality vs. speed. Higher quality uses more GPU time.</div>
+
+    <div class="quality-grid">
+      <label class="q-pill" id="qFast" onclick="selectQuality('fast')">
+        <input type="radio" name="quality" value="fast" />
+        <div class="q-icon">⚡</div>
+        <div class="q-name">Fast</div>
+        <div class="q-desc">480p · No enhancement</div>
+        <span class="q-badge green">1 Mbps</span>
+      </label>
+
+      <label class="q-pill selected" id="qBalanced" onclick="selectQuality('balanced')">
+        <input type="radio" name="quality" value="balanced" checked />
+        <div class="q-icon">⚖️</div>
+        <div class="q-name">Balanced</div>
+        <div class="q-desc">720p · Sharpening</div>
+        <span class="q-badge blue">3 Mbps</span>
+      </label>
+
+      <label class="q-pill" id="qHigh" onclick="selectQuality('high')">
+        <input type="radio" name="quality" value="high" />
+        <div class="q-icon">💎</div>
+        <div class="q-name">High Quality</div>
+        <div class="q-desc">1080p · Bilateral filter</div>
+        <span class="q-badge purple">6 Mbps</span>
+      </label>
+    </div>
+
+    <div class="options-row">
+      <label class="toggle-wrap">
+        <input type="checkbox" id="allFacesToggle" checked />
+        <span class="toggle"></span>
+        Swap all faces in frame
+      </label>
+      <label class="toggle-wrap" id="faceIdxWrap" style="display:none;">
+        Face index:
+        <input type="number" id="faceIdxInput" value="0" min="0" max="9" style="width:42px;background:var(--glass);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:12px;padding:3px 6px;" />
+      </label>
+    </div>
+
+    <div style="margin-top:14px;">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;">
+        Output Framing
+      </div>
+      <div class="mode-grid">
+        <label class="mode-pill selected" id="modeMaintain" onclick="selectResizeMode('maintain')">
+          <input type="radio" name="resizeMode" value="maintain" checked />
+          <div class="mode-name">Maintain Original Aspect Ratio</div>
+          <div class="mode-desc">No forced crop. Preserves portrait, landscape, and square framing.</div>
+        </label>
+        <label class="mode-pill" id="modeCropPortrait" onclick="selectResizeMode('crop_portrait')">
+          <input type="radio" name="resizeMode" value="crop_portrait" />
+          <div class="mode-name">Convert To Portrait (Crop)</div>
+          <div class="mode-desc">Center-crops wider videos to 9:16 portrait before processing.</div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Step 3: Generate Preview ────────────────────────────────────── -->
+  <div class="step-label">03 — Preview Clip</div>
+  <div class="card fade-in">
+    <div class="card-title">Preview First 4 Seconds</div>
+    <div class="card-sub">Generate a quick preview before committing to full processing.</div>
+
+    <div class="options-row">
+      <button class="btn btn-ghost" id="previewBtn" disabled onclick="doPreview()">
+        ▶ Generate Preview
+      </button>
+    </div>
+    <div class="error-box" id="previewError"></div>
+
+    <!-- Preview Player (hidden until ready) -->
+    <div class="preview-section" id="previewSection" style="margin-top:18px;">
+      <div class="video-wrap">
+        <video id="previewVideo" controls playsinline preload="auto"></video>
+      </div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--green);margin-bottom:12px;">
+        ✓ Preview ready — does it look good?
+      </div>
+      <div class="preview-actions">
+        <button class="btn btn-green btn-sm" id="confirmBtn" onclick="doProcess()">
+          ✓ Looks great — Process Full Video
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="resetApp()">
+          ✗ Cancel &amp; Re-upload
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Step 4: Progress & Result ──────────────────────────────────── -->
+  <div class="step-label">04 — Processing &amp; Result</div>
+  <div class="card progress-card fade-in" id="progressCard" style="display:none;">
+    <div class="card-title" style="margin-bottom:14px;">Pipeline Progress</div>
+
+    <!-- Staged bars -->
+    <div class="stages-row">
+      <div class="stage-item s-uploading"  id="stUpload">
+        <div class="stage-bar"><div class="stage-fill" id="sfUpload"></div></div>
+        <div class="stage-label">Uploading</div>
+      </div>
+      <div class="stage-item s-processing" id="stProcess">
+        <div class="stage-bar"><div class="stage-fill" id="sfProcess"></div></div>
+        <div class="stage-label">Processing</div>
+      </div>
+      <div class="stage-item s-enhancing"  id="stEnhance">
+        <div class="stage-bar"><div class="stage-fill" id="sfEnhance"></div></div>
+        <div class="stage-label">Enhancing</div>
+      </div>
+      <div class="stage-item s-rendering"  id="stRender">
+        <div class="stage-bar"><div class="stage-fill" id="sfRender"></div></div>
+        <div class="stage-label">Rendering</div>
+      </div>
+    </div>
+
+    <!-- Status row -->
+    <div class="progress-header">
+      <div id="statusBadge"></div>
+      <div class="progress-pct" id="progressPct">0%</div>
+    </div>
+    <div class="progress-log" id="progressLog">Waiting…</div>
+
+    <!-- Device + similarity info -->
+    <div id="metaRow" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"></div>
+
+    <!-- Log console -->
+    <div class="log-console" id="logConsole"></div>
+
+    <!-- Download block -->
+    <div class="download-block" id="downloadBlock">
+      <div class="download-info" id="downloadInfo">✓ Face swap complete.</div>
+      <div class="download-btns">
+        <a class="btn btn-green btn-sm" id="downloadLink" href="#" download>
+          ↓ Download Output
+        </a>
+        <button class="btn btn-ghost btn-sm" onclick="resetApp()">
+          ↺ Process Another
+        </button>
+      </div>
+    </div>
+
+    <div class="result-section" id="resultSection" style="margin-top:16px;">
+      <div class="video-wrap">
+        <video id="resultVideo" controls playsinline preload="metadata" autoplay muted></video>
+      </div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--green);margin-bottom:12px;">
+        ✓ Final output preview is ready.
+      </div>
+      <div class="result-actions">
+        <a class="btn btn-green btn-sm" id="resultDownloadLink" href="#" download>
+          ↓ Download This Video
+        </a>
+      </div>
+    </div>
+
+    <div class="error-box" id="jobError"></div>
+  </div>
+
+  <!-- ── Job History ─────────────────────────────────────────────────── -->
+  <div class="history-card" id="historyCard">
+    <div class="step-label">Recent Jobs</div>
+    <div class="card" style="padding:20px 24px;">
+      <div class="card-title" style="margin-bottom:14px;">Job History</div>
+      <div class="history-list" id="historyList"></div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:12px;" onclick="loadHistory()">
+        ↺ Refresh
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Professional Footer ──────────────────────────────────────── -->
+  <footer class="main-footer fade-in">
+    <div class="footer-content">
+      <!-- Left Column: Brand -->
+      <div class="footer-col col-brand">
+        <div class="footer-logo-wrap">
+          <img src="static/assets/logo.jpeg" class="footer-logo-img" alt="Logo">
+          <div class="footer-logo">PersonaForge AI</div>
+        </div>
+        <p class="footer-tagline">
+          Advanced AI-powered video face transformation engine with real-time GPU acceleration.
+        </p>
+        <div class="credibility-tags">
+          <span class="tag">GPU Accelerated</span>
+          <span class="tag">ONNX Powered</span>
+        </div>
+      </div>
+
+      <!-- Center Column: Navigation -->
+      <div class="footer-col col-nav">
+        <h4>Platform</h4>
+        <ul>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#how-it-works">How It Works</a></li>
+          <li><a href="https://github.com/himanshu-jadhav108" target="_blank">View on GitHub</a></li>
+        </ul>
+      </div>
+
+      <!-- Right Column: Connect -->
+      <div class="footer-col col-social">
+        <h4>Connect</h4>
+        <div class="footer-social-links">
+          <a href="https://github.com/himanshu-jadhav108" target="_blank">GitHub Repository</a>
+          <a href="https://www.linkedin.com/in/himanshu-jadhav-328082339" target="_blank">LinkedIn Profile</a>
+          <a href="https://himanshu-jadhav-portfolio.vercel.app/" target="_blank">Personal Portfolio</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Bar -->
+    <div class="footer-bottom">
+      <div class="footer-bottom-content">
+        <span>© 2026 <b>PersonaForge AI</b>. All rights reserved.</span>
+        <span>Built by <b style="color:var(--accent)">Himanshu Jadhav</b></span>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   PersonaForge AI — Frontend Controller
+═══════════════════════════════════════════════════════════════════ */
+
+// ── State ─────────────────────────────────────────────────────────
+let sessionId   = null;
+let previewJobId = null;
+let fullJobId   = null;
+let pollTimer   = null;
+let qualityMode = 'balanced';
+let resizeMode  = 'maintain';
+let logLines    = [];
+const MAX_LOG   = 30;
+
+// ── DOM Refs ──────────────────────────────────────────────────────
+const imgInput    = document.getElementById('imgInput');
+const vidInput    = document.getElementById('vidInput');
+const imgZone     = document.getElementById('imgZone');
+const vidZone     = document.getElementById('vidZone');
+const uploadBtn   = document.getElementById('uploadBtn');
+const previewBtn  = document.getElementById('previewBtn');
+const progressCard = document.getElementById('progressCard');
+const allFacesTgl = document.getElementById('allFacesToggle');
+const faceIdxWrap = document.getElementById('faceIdxWrap');
+
+// ── Quality Selector ──────────────────────────────────────────────
+function selectQuality(q) {
+  qualityMode = q;
+  ['fast','balanced','high'].forEach(v => {
+    document.getElementById('q' + v.charAt(0).toUpperCase() + v.slice(1))
+            .classList.toggle('selected', v === q);
+  });
+}
+
+function selectResizeMode(mode) {
+  resizeMode = mode;
+  document.getElementById('modeMaintain').classList.toggle('selected', mode === 'maintain');
+  document.getElementById('modeCropPortrait').classList.toggle('selected', mode === 'crop_portrait');
+}
+
+// Multi-face toggle
+allFacesTgl.addEventListener('change', () => {
+  faceIdxWrap.style.display = allFacesTgl.checked ? 'none' : 'flex';
+});
+
+// ── File Input Wiring ─────────────────────────────────────────────
+imgInput.addEventListener('change', () => {
+  const f = imgInput.files[0]; if (!f) return;
+  imgZone.classList.add('has-file');
+  document.getElementById('imgName').textContent = f.name;
+  const url = URL.createObjectURL(f);
+  document.getElementById('imgThumb').innerHTML = `<img src="${url}" alt="face preview" />`;
+  checkFilesReady();
+});
+
+vidInput.addEventListener('change', () => {
+  const f = vidInput.files[0]; if (!f) return;
+  vidZone.classList.add('has-file');
+  document.getElementById('vidName').textContent =
+    `${f.name} · ${(f.size / 1024 / 1024).toFixed(1)} MB`;
+  checkFilesReady();
+});
+
+// Drag-and-drop
+[['imgZone','imgInput'], ['vidZone','vidInput']].forEach(([zId, iId]) => {
+  const zone  = document.getElementById(zId);
+  const input = document.getElementById(iId);
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) {
+      const dt = new DataTransfer(); dt.items.add(e.dataTransfer.files[0]);
+      input.files = dt.files; input.dispatchEvent(new Event('change'));
+    }
+  });
+});
+
+function checkFilesReady() {
+  const ok = imgInput.files.length > 0 && vidInput.files.length > 0;
+  uploadBtn.disabled = !ok;
+}
+
+// ── Upload ────────────────────────────────────────────────────────
+async function doUpload() {
+  clearErrors();
+  const imgFile = imgInput.files[0];
+  const vidFile = vidInput.files[0];
+  if (!imgFile || !vidFile) {
+    showError('uploadError', 'Please select both a face image and a target video.');
+    return;
+  }
+
+  uploadBtn.disabled = true;
+  uploadBtn.textContent = '↑ Uploading…';
+  setStageProgress('upload', 40);
+
+  const form = new FormData();
+  form.append('image', imgFile);
+  form.append('video', vidFile);
+
+  try {
+    const res  = await fetch('/upload', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    sessionId = data.session_id;
+    document.getElementById('uploadStatus').textContent = `✓ Session ${sessionId.slice(0,10)}…`;
+    uploadBtn.textContent = '✓ Uploaded';
+    previewBtn.disabled = false;
+    setStageProgress('upload', 100);
+    addLog(`Session: ${sessionId.slice(0,16)}… ready`, 'ok');
+
+    const qualitySection = document.getElementById('features');
+    qualitySection?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // Show video info
+    const vi = data.video_info;
+    if (vi && vi.width) {
+      addLog(`Video: ${vi.width}×${vi.height} @ ${(vi.fps||0).toFixed(1)}fps, ${(vi.duration||0).toFixed(1)}s`);
+      addLog(`Orientation: ${vi.orientation || 'unknown'} · Aspect ${(vi.aspect_ratio || 0).toFixed(3)}`);
+    }
+
+    await loadHistory();
+  } catch (e) {
+    showError('uploadError', e.message);
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = '↑ Upload Files';
+    setStageProgress('upload', 0);
+  }
+}
+
+// ── Preview ───────────────────────────────────────────────────────
+async function doPreview() {
+  if (!sessionId) return;
+  clearErrors();
+  showProgressCard();
+  previewBtn.disabled = true;
+  previewBtn.textContent = '▶ Generating…';
+  setStageProgress('process', 10);
+
+  const fi = allFacesTgl.checked ? -1 : parseInt(document.getElementById('faceIdxInput').value || '0');
+  const params = new URLSearchParams({
+    session_id: sessionId,
+    quality: qualityMode,
+    face_index: fi,
+    duration: 4,
+    resize_mode: resizeMode,
+  });
+
+  try {
+    const res  = await fetch(`/preview?${params}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    previewJobId = data.job_id;
+    addLog(`Preview job ${previewJobId.slice(0,8)} started`, 'info');
+    startPolling(previewJobId, 'preview');
+  } catch (e) {
+    showError('previewError', e.message);
+    previewBtn.disabled = false;
+    previewBtn.textContent = '▶ Generate Preview';
+  }
+}
+
+// ── Full Process ──────────────────────────────────────────────────
+async function doProcess() {
+  if (!sessionId) return;
+  clearErrors();
+  showProgressCard();
+  document.getElementById('confirmBtn').disabled = true;
+  setStageProgress('process', 5);
+  setStageProgress('enhance', 0);
+  setStageProgress('render', 0);
+  document.getElementById('downloadBlock').classList.remove('visible');
+
+  const fi = allFacesTgl.checked ? -1 : parseInt(document.getElementById('faceIdxInput').value || '0');
+  const params = new URLSearchParams({
+    session_id: sessionId,
+    quality: qualityMode,
+    face_index: fi,
+    resize_mode: resizeMode,
+  });
+
+  try {
+    const res  = await fetch(`/process?${params}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    fullJobId = data.job_id;
+    addLog(`Full job ${fullJobId.slice(0,8)} started [${qualityMode.toUpperCase()}]`, 'info');
+    startPolling(fullJobId, 'full');
+  } catch (e) {
+    showError('jobError', e.message);
+    document.getElementById('confirmBtn').disabled = false;
+  }
+}
+
+// ── Polling ────────────────────────────────────────────────────────
+function startPolling(jobId, kind) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => pollStatus(jobId, kind), 1500);
+}
+
+async function pollStatus(jobId, kind) {
+  try {
+    const res  = await fetch(`/status/${jobId}`);
+    const data = await res.json();
+    updateProgress(data, kind);
+    if (data.status === 'done' || data.status === 'error') {
+      clearInterval(pollTimer); pollTimer = null;
+      await loadHistory();
+    }
+  } catch (e) { console.error('Poll error:', e); }
+}
+
+// ── Progress Update ────────────────────────────────────────────────
+function updateProgress(data, kind) {
+  const pct  = data.progress || 0;
+  const stage = data.stage || 'processing';
+  const msg   = data.message || '';
+
+  // Percentage text
+  document.getElementById('progressPct').textContent = pct + '%';
+  document.getElementById('progressLog').textContent = msg;
+  addLog(msg);
+
+  // Update stage bars
+  updateStageBars(stage, pct);
+
+  // Device pill
+  if (data.device) updateGpuPill(data.device === 'GPU');
+
+  // Meta row
+  const metaRow = document.getElementById('metaRow');
+  let metaHtml = '';
+  if (data.device) {
+    const cls = data.device === 'GPU' ? 'badge-running' : 'badge-queued';
+    metaHtml += `<span class="badge ${cls}"><span class="dot"></span>${data.device}</span>`;
+  }
+  if (data.similarity_score !== null && data.similarity_score !== undefined) {
+    const sc = (data.similarity_score * 100).toFixed(0);
+    metaHtml += `<span class="badge badge-queued"><span class="dot"></span>Similarity ${sc}%</span>`;
+  }
+  if (data.orientation) {
+    const dims = (data.input_width && data.input_height)
+      ? ` ${data.input_width}x${data.input_height}`
+      : '';
+    metaHtml += `<span class="badge badge-queued"><span class="dot"></span>${data.orientation}${dims}</span>`;
+  }
+  if (data.resize_mode) {
+    const modeText = data.resize_mode === 'crop_portrait' ? 'Portrait Crop' : 'Keep Aspect';
+    metaHtml += `<span class="badge badge-queued"><span class="dot"></span>${modeText}</span>`;
+  }
+  metaRow.innerHTML = metaHtml;
+
+  // Badge
+  const badgeMap = {
+    queued:  ['badge-queued',  '◉ Queued'],
+    running: ['badge-running', '◉ Running'],
+    done:    ['badge-done',    '◉ Done'],
+    error:   ['badge-error',   '◉ Error'],
+  };
+  const [cls, label] = badgeMap[data.status] || ['badge-queued', data.status];
+  document.getElementById('statusBadge').innerHTML =
+    `<span class="badge ${cls}"><span class="dot"></span>${label}</span>`;
+
+  // Preview done → show player
+  if (kind === 'preview' && data.status === 'done' && data.output) {
+    showPreviewPlayer(data.output);
+    previewBtn.textContent = '▶ Preview Generated';
+  }
+
+  // Full done → show download
+  if (kind === 'full' && data.status === 'done' && data.output) {
+    const dl   = document.getElementById('downloadBlock');
+    const link = document.getElementById('downloadLink');
+    link.href     = `/download/${data.output}`;
+    link.download = data.output;
+    const resultLink = document.getElementById('resultDownloadLink');
+    resultLink.href = `/download/${data.output}`;
+    resultLink.download = data.output;
+    const sizeTxt = data.file_size_mb ? ` · ${data.file_size_mb} MB` : '';
+    document.getElementById('downloadInfo').textContent =
+      `✓ Face swap complete${sizeTxt} — ready to download.`;
+    dl.classList.add('visible');
+    showResultPlayer(data.output);
+    setStageProgress('render', 100);
+    addLog(`Output: ${data.output}${sizeTxt}`, 'ok');
+  }
+
+  if (data.status === 'error') {
+    showError('jobError', data.message);
+    addLog('Error: ' + data.message, 'err');
+  }
+}
+
+function updateStageBars(stage, pct) {
+  // Map backend stage names to visual segment fills
+  const stages = {
+    queued:     { upload: 0,   process: 0,   enhance: 0,   render: 0 },
+    uploading:  { upload: pct, process: 0,   enhance: 0,   render: 0 },
+    processing: { upload: 100, process: pct, enhance: 0,   render: 0 },
+    enhancing:  { upload: 100, process: 100, enhance: pct, render: 0 },
+    rendering:  { upload: 100, process: 100, enhance: 100, render: pct },
+    done:       { upload: 100, process: 100, enhance: 100, render: 100 },
+    error:      {},
+  };
+  const map = stages[stage] || stages['processing'];
+  setStageProgress('upload',  map.upload  ?? 0);
+  setStageProgress('process', map.process ?? 0);
+  setStageProgress('enhance', map.enhance ?? 0);
+  setStageProgress('render',  map.render  ?? 0);
+
+  // Active label highlight
+  const stageIds = ['Upload','Process','Enhance','Render'];
+  const activeMap = {
+    uploading:  'Upload',  processing: 'Process',
+    enhancing:  'Enhance', rendering:  'Render',
+    done: 'Render',
+  };
+  const active = activeMap[stage] || '';
+  stageIds.forEach(s => {
+    document.getElementById('st' + s)?.classList.toggle('active', s === active);
+  });
+}
+
+function setStageProgress(name, val) {
+  const el = document.getElementById('sf' + name.charAt(0).toUpperCase() + name.slice(1));
+  if (el) el.style.width = Math.min(100, val) + '%';
+}
+
+// ── Preview Player ─────────────────────────────────────────────────
+function showPreviewPlayer(filename) {
+  const sec = document.getElementById('previewSection');
+  const vid = document.getElementById('previewVideo');
+  vid.src = `/download/${filename}`;
+  vid.load();
+  sec.classList.add('visible');
+  sec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function showResultPlayer(filename) {
+  const sec = document.getElementById('resultSection');
+  const vid = document.getElementById('resultVideo');
+  vid.autoplay = true;
+  vid.muted = true;
+  vid.src = `/download/${filename}`;
+  vid.load();
+  sec.classList.add('visible');
+  const playPromise = vid.play();
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(() => {
+      // Ignore autoplay rejections; user can press play manually.
+    });
+  }
+  sec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ── Log Console ────────────────────────────────────────────────────
+function addLog(msg, cls = '') {
+  if (!msg || msg === logLines[logLines.length - 1]) return;
+  logLines.push(msg);
+  if (logLines.length > MAX_LOG) logLines.shift();
+  const console_ = document.getElementById('logConsole');
+  const ts = new Date().toTimeString().slice(0, 8);
+  const line = document.createElement('div');
+  line.className = 'log-line' + (cls ? ` ${cls}` : '');
+  line.textContent = `[${ts}] ${msg}`;
+  console_.appendChild(line);
+  console_.scrollTop = console_.scrollHeight;
+}
+
+// ── GPU Pill ───────────────────────────────────────────────────────
+function updateGpuPill(isGpu) {
+  const pill  = document.getElementById('gpuPill');
+  const label = document.getElementById('gpuLabel');
+  pill.className = 'gpu-pill' + (isGpu ? ' active' : '');
+  label.textContent = isGpu ? 'GPU Active' : 'CPU Mode';
+}
+
+// ── Job History ────────────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const res  = await fetch('/jobs?limit=8');
+    const data = await res.json();
+    const card = document.getElementById('historyCard');
+    const list = document.getElementById('historyList');
+    if (!data.jobs || data.jobs.length === 0) return;
+    card.classList.add('visible');
+    list.innerHTML = data.jobs.map(j => {
+      const s     = j.status;
+      const cls   = `badge-${s}`;
+      const time  = j.created_at ? new Date(j.created_at).toLocaleTimeString() : '';
+      const dlBtn = (s === 'done' && j.output)
+        ? `<a class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:10px;" href="/download/${j.output}" download>↓</a>`
+        : '';
+      const viewBtn = (s === 'done' && j.output)
+        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:10px;" onclick="openResultFromHistory('${j.output}')">View</button>`
+        : '';
+      const msg = (j.message || '').slice(0, 60);
+      return `<div class="history-item">
+        <div style="width:48px;height:30px;background:rgba(77,159,255,0.08);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;border:1px solid var(--border);flex-shrink:0;">
+          ${s === 'done' ? '🎬' : s === 'error' ? '⚠️' : '⚙️'}
+        </div>
+        <div class="history-info">
+          <div class="history-id">${j.id.slice(0,12)}… · ${j.kind || ''} · ${j.stage || ''}</div>
+          <div class="history-msg">${msg}</div>
+        </div>
+        <span class="badge ${cls}" style="font-size:9px;padding:3px 8px;">${s}</span>
+        ${viewBtn}
+        ${dlBtn}
+        <div class="history-time">${time}</div>
+      </div>`;
+    }).join('');
+  } catch (e) { console.error('History error:', e); }
+}
+
+function openResultFromHistory(filename) {
+  const downloadLink = document.getElementById('downloadLink');
+  const resultLink = document.getElementById('resultDownloadLink');
+  downloadLink.href = `/download/${filename}`;
+  downloadLink.download = filename;
+  resultLink.href = `/download/${filename}`;
+  resultLink.download = filename;
+  document.getElementById('downloadInfo').textContent = `✓ Selected output: ${filename}`;
+  document.getElementById('downloadBlock').classList.add('visible');
+  showProgressCard();
+  showResultPlayer(filename);
+}
+
+// ── UI Helpers ─────────────────────────────────────────────────────
+function showProgressCard() {
+  progressCard.style.display = 'block';
+  progressCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function showError(id, msg) {
+  const el = document.getElementById(id);
+  if (el) { el.textContent = '✗ ' + msg; el.classList.add('visible'); }
+}
+
+function clearErrors() {
+  document.querySelectorAll('.error-box').forEach(el => {
+    el.textContent = ''; el.classList.remove('visible');
+  });
+}
+
+function resetApp() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  sessionId = previewJobId = fullJobId = null;
+  logLines  = [];
+  imgInput.value = ''; vidInput.value = '';
+  imgZone.classList.remove('has-file');
+  vidZone.classList.remove('has-file');
+  document.getElementById('imgName').textContent  = '';
+  document.getElementById('imgThumb').innerHTML   = '';
+  document.getElementById('vidName').textContent  = '';
+  document.getElementById('uploadStatus').textContent = '';
+  uploadBtn.disabled  = true;  uploadBtn.textContent = '↑ Upload Files';
+  previewBtn.disabled = true;  previewBtn.textContent = '▶ Generate Preview';
+  selectResizeMode('maintain');
+  progressCard.style.display = 'none';
+  document.getElementById('previewSection').classList.remove('visible');
+  document.getElementById('resultSection').classList.remove('visible');
+  document.getElementById('resultVideo').removeAttribute('src');
+  document.getElementById('resultVideo').load();
+  document.getElementById('downloadBlock').classList.remove('visible');
+  document.getElementById('logConsole').innerHTML = '';
+  document.getElementById('metaRow').innerHTML    = '';
+  clearErrors();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Init ───────────────────────────────────────────────────────────
+(async function init() {
+  // Detect GPU from first job or wait for first request
+  document.getElementById('gpuLabel').textContent = 'Ready';
+
+  // Restore history on load
+  await loadHistory();
+
+  // Check if any jobs are still running (page refresh recovery)
+  try {
+    const res  = await fetch('/jobs?limit=5');
+    const data = await res.json();
+    const running = (data.jobs || []).find(j => j.status === 'running' || j.status === 'queued');
+    if (running) {
+      sessionId = running.session_id;
+      showProgressCard();
+      addLog(`Resuming job ${running.id.slice(0,8)}…`, 'info');
+      startPolling(running.id, running.kind || 'full');
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>
