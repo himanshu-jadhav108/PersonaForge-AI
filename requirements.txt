@@ -1,0 +1,32 @@
+# ──────────────────────────────────────────────────────────────
+# PersonaForge AI — Production Requirements
+# Optimized for Python 3.10+
+# ──────────────────────────────────────────────────────────────
+
+# Core Web Server
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.12
+
+# Mathematical & Computer Vision
+numpy<2.0.0                # Essential for OpenVINO/ONNX compatibility
+opencv-python>=4.10.0.84
+scipy>=1.12.0
+scikit-learn>=1.4.0
+albumentations>=1.4.10
+
+# AI Inference & Face Analysis
+insightface==0.7.3         # Pinned to ensure model compatibility
+onnx>=1.16.0
+# onnxruntime-gpu>=1.18.0  # ← RECOMMENDED for GPU systems
+onnxruntime>=1.18.0        # ← Default CPU fallback
+
+# Utilities
+requests>=2.31.0
+tqdm>=4.66.0
+Pillow>=10.3.0
+
+# ──────────────────────────────────────────────────────────────
+# System dependencies (Binary):
+#   ffmpeg   →  System installation required for video I/O
+# ──────────────────────────────────────────────────────────────
