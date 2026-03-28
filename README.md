@@ -125,19 +125,27 @@ The **preview mode** uses a 1-in-3 frame skip. While this creates a slightly jit
 ## 📁 Project Structure
  ```text
  PersonaForge/
- ├── main.py              # FastAPI Entry Point
- ├── face_swap.py         # Core Router & Hardware Logic
- ├── video_utils.py       # FFmpeg & CV2 Video I/O
- ├── requirements.txt     # Dependency Manifest
- ├── .gitignore           # Optimized for Python/AI
- ├── config/              # Performance Tuning Constants
- │   ├── config_cpu.py    # Responsive settings for CPU
- │   └── config_gpu.py    # High-fidelity settings for GPU
- ├── pipelines/           # Modular Logic Layers
- │   ├── pipeline_cpu.py  # Optimized Loop (Skip/Track/Paste)
- │   └── pipeline_gpu.py  # High-fidelity Loop (Poisson)
- ├── tests/               # Validation Suite
- └── models/              # Pre-trained ONNX Weights
+ ├── main.py                    # FastAPI application entry point
+ ├── face_swap.py               # Core face-swap engine and dispatcher
+ ├── video_utils.py             # FFmpeg/CV2 media utilities
+ ├── requirements.txt           # Python dependencies
+ ├── environment.yml            # Conda environment (faceswap)
+ ├── .gitignore
+ ├── config/
+ │   ├── config_cpu.py          # CPU tuning profile
+ │   └── config_gpu.py          # GPU tuning profile
+ ├── models/
+ │   └── model_manager.py       # ONNX model validation + download manager
+ ├── pipelines/
+ │   ├── pipeline_cpu.py        # CPU-optimized pipeline
+ │   └── pipeline_gpu.py        # GPU pipeline wrapper
+ ├── scripts/
+ │   ├── setup_models.py        # Model setup CLI
+ │   └── check_gpu.py           # GPU diagnostics CLI
+ ├── utils/
+ │   └── tracker_factory.py     # Shared OpenCV tracker factory
+ ├── tests/
+ └── static/
  ```
 
 ---
@@ -152,19 +160,59 @@ The **preview mode** uses a 1-in-3 frame skip. While this creates a slightly jit
 
 ## 📦 Installation & Setup
 
-### 1. Environment Setup
+### 1. Create and Activate Conda Environment
+```bash
+conda env create -f environment.yml
+conda activate personaforge
+```
+
+If you prefer manual environment creation:
+
 ```bash
 conda create -n personaforge python=3.10 -y
 conda activate personaforge
 pip install -r requirements.txt
 ```
 
-### 2. Run the Server
+### 2. Download Required Models
+
+PersonaForge requires ONNX model files (for example `inswapper_128.onnx`) that are not included in this repository.
+
+Use the setup command:
+
 ```bash
-# Start the FastAPI engine
+python scripts/setup_models.py
+```
+
+What this does:
+
+- checks required model files
+- downloads missing files automatically
+- stores files under the `models/` directory
+
+Manual fallback:
+
+- download from https://huggingface.co/deepinsight/inswapper/resolve/main/inswapper_128.onnx
+- place file at `models/inswapper_128.onnx`
+
+### 3. Start the API Server
+```bash
 python main.py
 ```
-Open `http://127.0.0.1:8000` to access the visual interface.
+
+Open `http://127.0.0.1:8000` in your browser.
+
+### 4. Optional Diagnostics
+```bash
+python scripts/check_gpu.py
+```
+
+### 5. Quick Start (3 Commands)
+```bash
+conda activate personaforge
+python scripts/setup_models.py
+python main.py
+```
 
 ---
 
