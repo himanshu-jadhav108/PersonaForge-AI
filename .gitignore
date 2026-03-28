@@ -1,0 +1,45 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
+.venv
+venv/
+env/
+ENV/
+*.bak
+*.swp
+
+# Application Data (Temporary)
+temp_frames/
+uploads/
+outputs/
+*.mp4
+*.png
+*.gif
+
+# Models (Large binaries)
+models/
+!models/
+models/*
+!models/model_manager.py
+*.onnx
+models/*.onnx
+models/buffalo_l/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+.gemini/
+.agents/
+.agent/
+brain/
+implementation_plan.md
+task.md
+walkthrough.md
