@@ -73,10 +73,10 @@ def process_video_cpu(
     output_dir:  str,
     face_index:  int        = -1,
     max_frames:  Optional[int] = None,
-    job_status:  dict       = None,
-    job_id:      str        = None,
     progress_start: int     = 40,
     progress_end:   int     = 80,
+    db_manager              = None,
+    job_id:      str        = None,
 ) -> tuple[int, int]:
     """
     CPU-optimised face-swap loop.
@@ -138,7 +138,7 @@ def process_video_cpu(
                     )
             skipped += 1
             _maybe_flush(write_futures, BATCH_FLUSH)
-            _update_progress(job_status, job_id, i, total,
+            _update_progress(db_manager, job_id, i, total,
                              progress_start, progress_end, swapped, skipped)
             continue
 
@@ -205,7 +205,7 @@ def process_video_cpu(
                 )
                 skipped += 1
                 _maybe_flush(write_futures, BATCH_FLUSH)
-                _update_progress(job_status, job_id, i, total,
+                _update_progress(db_manager, job_id, i, total,
                                  progress_start, progress_end, swapped, skipped)
                 continue
 
@@ -267,7 +267,7 @@ def process_video_cpu(
             write_pool.submit(_write_frame, out_file, result_full)
         )
         _maybe_flush(write_futures, BATCH_FLUSH)
-        _update_progress(job_status, job_id, i, total,
+        _update_progress(db_manager, job_id, i, total,
                          progress_start, progress_end, swapped, skipped)
 
     # Drain remaining writes
@@ -297,15 +297,13 @@ def _maybe_flush(futures: list, limit: int) -> None:
 
 
 def _update_progress(
-    job_status, job_id, i, total,
+    db_manager, job_id, i, total,
     progress_start, progress_end, swapped, skipped
 ) -> None:
-    if job_status is not None and job_id is not None:
-        if job_id not in job_status:
-            return
+    if db_manager is not None and job_id is not None:
         span = progress_end - progress_start
         pct  = progress_start + int((i + 1) / total * span)
-        job_status[job_id]["progress"] = pct
-        job_status[job_id]["message"]  = (
-            f"[CPU] Frame {i+1}/{total} — swapped={swapped}, skipped={skipped}"
-        )
+        db_manager.update_job(job_id, {
+            "progress": pct,
+            "message": f"[CPU] Frame {i+1}/{total} — swapped={swapped}, skipped={skipped}"
+        })

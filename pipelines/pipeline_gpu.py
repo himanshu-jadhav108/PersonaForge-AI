@@ -22,10 +22,10 @@ def process_video_gpu(
     quality:     "QualityMode",
     face_index:  int         = -1,
     max_frames:  Optional[int] = None,
-    job_status:  dict        = None,
-    job_id:      str         = None,
     progress_start: int      = 40,
     progress_end:   int      = 80,
+    db_manager               = None,
+    job_id:      str         = None,
 ) -> tuple[int, int]:
     """
     Delegate to the original GPU processing loop unchanged.
@@ -38,8 +38,8 @@ def process_video_gpu(
         quality         = quality,
         face_index      = face_index,
         max_frames      = max_frames,
-        job_status      = job_status,
-        job_id          = job_id,
         progress_start  = progress_start,
         progress_end    = progress_end,
+        db_manager      = db_manager,
+        job_id          = job_id,
     )
