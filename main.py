@@ -15,7 +15,7 @@ import time
 import uuid
 import logging
 import asyncio
-import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from collections import OrderedDict
@@ -32,6 +32,7 @@ from video_utils import (
 )
 from face_swap import FaceSwapper, FaceSwapError, QualityMode
 from models.model_manager import check_models
+from utils.database import JobDB
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -51,14 +52,16 @@ STATIC_DIR  = BASE_DIR / "static"
 for d in [UPLOADS_DIR, FRAMES_DIR, OUTPUTS_DIR, STATIC_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-# ─── Job Store (in-memory, FIFO eviction at 100 jobs) ─────────────────────────
-JOBS: "OrderedDict[str, dict]" = OrderedDict()
-MAX_JOBS = 100
+# ─── Database Manager ─────────────────────────────────────────────────────────
+db = JobDB(str(BASE_DIR / "jobs.db"))
+
+# Semaphore to limit concurrent heavy processing tasks (1 per system)
+process_semaphore = asyncio.Semaphore(1)
 
 def _new_job(session_id: str, kind: str) -> str:
-    """Create a new job entry, evict oldest if over limit."""
+    """Create a new job entry in SQLite."""
     job_id = uuid.uuid4().hex
-    JOBS[job_id] = {
+    job_data = {
         "id":              job_id,
         "session_id":      session_id,
         "kind":            kind,          # "preview" | "full"
@@ -69,23 +72,20 @@ def _new_job(session_id: str, kind: str) -> str:
         "output":          None,
         "file_size_mb":    None,
         "device":          None,
+        "mode":            None,
         "similarity_score": None,
         "orientation":     None,
         "input_width":     None,
         "input_height":    None,
         "resize_mode":     "maintain",
-        "created_at":      datetime.datetime.utcnow().isoformat() + "Z",
+        "created_at":      datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    while len(JOBS) > MAX_JOBS:
-        JOBS.popitem(last=False)
+    db.insert_job(job_data)
     return job_id
 
 def _update(job_id: str, status: str, stage: str, progress: int, message: str, **extra):
-    if job_id not in JOBS:
-        return
-    JOBS[job_id].update(dict(
-        status=status, stage=stage, progress=progress, message=message, **extra
-    ))
+    updates = dict(status=status, stage=stage, progress=progress, message=message, **extra)
+    db.update_job(job_id, updates)
     logger.info("[%s] %d%% [%s] %s", job_id[:8], progress, stage, message)
 
 # ─── Quality → bitrate & target height map ─────────────────────────────────────
@@ -97,17 +97,62 @@ _QUALITY_CONFIG = {
 
 # ─── FastAPI App ───────────────────────────────────────────────────────────────
 # ─── App Lifespan ─────────────────────────────────────────────────────────────
+# ─── Auto Cleanup Task ────────────────────────────────────────────────────────
+async def auto_cleanup_loop():
+    """Background task to purge old files."""
+    while True:
+        try:
+            logger.info("[cleanup] Starting periodic maintenance…")
+            # 1. Clean temp frames (keep 6 hours)
+            cleanup_temp_dirs(*[str(d) for d in FRAMES_DIR.glob("*") if time.time() - d.stat().st_mtime > 6 * 3600])
+            
+            # 2. Clean uploads (keep 24 hours)
+            # Find files/dirs in UPLOADS_DIR older than 24h
+            for p in UPLOADS_DIR.iterdir():
+                if time.time() - p.stat().st_mtime > 24 * 3600:
+                    if p.is_dir():
+                        cleanup_temp_dirs(str(p))
+                    else:
+                        p.unlink(missing_ok=True)
+            
+            # 3. Clean outputs (keep 7 days)
+            for p in OUTPUTS_DIR.iterdir():
+                if p.is_file() and time.time() - p.stat().st_mtime > 7 * 24 * 3600:
+                    p.unlink(missing_ok=True)
+                    
+            logger.info("[cleanup] Maintenance complete.")
+        except Exception as e:
+            logger.error("[cleanup] Error: %s", e)
+        
+        await asyncio.sleep(3600)  # Sleep 1 hour
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown logic."""
     try:
+        # 1. Database recovery: Fail jobs that were left hanging
+        db.fail_stalled_jobs()
+
+        # 2. Model validation
         check_models(auto_download=False)
         logger.info("[lifespan] Models validated on startup.")
-    except FileNotFoundError as exc:
-        logger.error("[lifespan] Model validation failed: %s", exc)
+        
+        # 3. Initialize Shared Swapper (Singleton)
+        logger.info("[lifespan] Initializing global FaceSwapper (this may take a moment)…")
+        app.state.swapper = FaceSwapper()
+
+        # 4. Start cleanup task
+        app.state.cleanup_task = asyncio.create_task(auto_cleanup_loop())
+    except Exception as exc:
+        logger.error("[lifespan] Initialization failed: %s", exc)
+        # We don't raise here if we want the app to still start (e.g. for inspection), 
+        # but for this app, models are critical.
         raise RuntimeError(str(exc)) from exc
     yield
-    # No cleanup required for now
+    # Cleanup
+    if hasattr(app.state, "cleanup_task"):
+        app.state.cleanup_task.cancel()
 
 # ─── FastAPI App ───────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -155,14 +200,23 @@ async def upload_files(
 
     img_ext  = Path(image.filename).suffix.lower()
     img_path = session_dir / f"source_face{img_ext}"
+    # Security: File size limit
+    MAX_IMG_SIZE = 50 * 1024 * 1024  # 50 MB
+    MAX_VID_SIZE = 500 * 1024 * 1024 # 500 MB
+
     img_data = await image.read()
+    if len(img_data) > MAX_IMG_SIZE:
+        raise HTTPException(413, "Image file too large (limit 50MB).")
     if not img_data:
         raise HTTPException(400, "Uploaded image is empty.")
     img_path.write_bytes(img_data)
 
     vid_ext  = Path(video.filename).suffix.lower()
     vid_path = session_dir / f"target_video{vid_ext}"
+
     vid_data = await video.read()
+    if len(vid_data) > MAX_VID_SIZE:
+        raise HTTPException(413, "Video file too large (limit 500MB).")
     if not vid_data:
         raise HTTPException(400, "Uploaded video is empty.")
     vid_path.write_bytes(vid_data)
@@ -196,6 +250,7 @@ async def preview_faceswap(
     job_id = _new_job(session_id, "preview")
     background_tasks.add_task(
         _run_pipeline,
+        swapper=app.state.swapper,
         job_id=job_id, session_id=session_id,
         img_path=img_path, vid_path=vid_path,
         quality=quality, face_index=face_index,
@@ -218,6 +273,7 @@ async def process_faceswap(
     job_id = _new_job(session_id, "full")
     background_tasks.add_task(
         _run_pipeline,
+        swapper=app.state.swapper,
         job_id=job_id, session_id=session_id,
         img_path=img_path, vid_path=vid_path,
         quality=quality, face_index=face_index,
@@ -230,15 +286,16 @@ async def process_faceswap(
 
 @app.get("/status/{job_id}", summary="Poll job progress")
 async def job_status(job_id: str):
-    if job_id not in JOBS:
+    job = db.get_job(job_id)
+    if not job:
         raise HTTPException(404, "Job not found.")
-    return JSONResponse(JOBS[job_id])
+    return JSONResponse(job)
 
 
 @app.get("/jobs", summary="List recent job history")
 async def list_jobs(limit: int = Query(20, ge=1, le=100)):
-    recent = list(reversed(list(JOBS.values())))[:limit]
-    return JSONResponse({"jobs": recent, "total": len(JOBS)})
+    recent = db.get_recent_jobs(limit)
+    return JSONResponse({"jobs": recent, "total": len(recent)})
 
 
 @app.get("/download/{filename}", summary="Download an output video")
@@ -268,6 +325,7 @@ def _resolve_session(session_id: str) -> tuple[Path, str, str]:
 # ─── Background Pipeline ───────────────────────────────────────────────────────
 
 async def _run_pipeline(
+    swapper:         FaceSwapper,
     job_id:          str,
     session_id:      str,
     img_path:        str,
@@ -294,137 +352,148 @@ async def _run_pipeline(
         _update(job_id, "running", stage, progress, message, **extra)
 
     t_total = time.perf_counter()
-    try:
-        # ── Init swapper ───────────────────────────────────────────────────
-        upd("processing", 5, "Loading AI models…")
-        swapper = FaceSwapper()
-        device  = swapper.get_execution_provider()
-        mode    = swapper.get_mode()   # 'gpu' | 'cpu'
-        JOBS[job_id]["device"] = device
-        JOBS[job_id]["mode"]   = mode
-        JOBS[job_id]["resize_mode"] = resize_mode
-        upd("processing", 10, f"Models ready on {device}.", device=device)
+    frames_dir = None
+    processed_dir = None
+    resized_path = None
 
-        # ── CPU override: lock to 480p + 1M regardless of requested quality ───
-        if mode == "cpu":
-            height  = min(height, 480) if height > 0 else 480
-            bitrate = "1M"
-            upd("processing", 11,
-                "Running in CPU optimized mode (faster settings applied)…")
-        else:
-            upd("processing", 11, "Running in GPU mode (high quality)…")
+    async with process_semaphore:
+        try:
+            # ── Get swapper info ───────────────────────────────────────────
+            device  = swapper.get_execution_provider()
+            mode    = swapper.get_mode()   # 'gpu' | 'cpu'
+            
+            db.update_job(job_id, {
+                "device": device,
+                "mode": mode,
+                "resize_mode": resize_mode
+            })
+            upd("processing", 10, f"Using {device} pipeline.", device=device)
 
-        # ── Resize ────────────────────────────────────────────────────────
-        upd("processing", 12, "Checking resolution…")
-        loop = asyncio.get_event_loop()
-        info = get_video_info(vid_path)
-        in_w = int(info.get("width", 0) or 0)
-        in_h = int(info.get("height", 0) or 0)
-        orientation = info.get("orientation", "unknown")
-        JOBS[job_id].update({
-            "input_width": in_w,
-            "input_height": in_h,
-            "orientation": orientation,
-        })
-        resized_path = vid_path
-        need_resize = (height > 0 and max(in_w, in_h) > height) or (resize_mode == "crop_portrait")
-        if need_resize:
-            resized_path = vid_path.replace(Path(vid_path).suffix, f"_{height}p_{resize_mode}.mp4")
-            upd("processing", 14, f"Preparing {orientation} video ({resize_mode})…")
-            await loop.run_in_executor(None, resize_video, vid_path, resized_path, height, resize_mode)
-        else:
-            upd("processing", 14, f"Resolution OK ({in_w}x{in_h}, {orientation}).")
+            # ── CPU override: lock to 480p + 1M regardless of requested quality ───
+            if mode == "cpu":
+                height  = min(height, 480) if height > 0 else 480
+                bitrate = "1M"
+                upd("processing", 11, "Running in CPU optimized mode…")
+            else:
+                upd("processing", 11, "Running in GPU mode…")
 
-        # ── Extract frames ────────────────────────────────────────────────
-        suffix  = "_preview" if is_preview else ""
-        frames_dir  = str(FRAMES_DIR / f"{job_id}{suffix}")
-        upd("processing", 16, f"Extracting frames{' (preview)' if is_preview else ''}…")
-        fps, total_frames, audio_path = await loop.run_in_executor(
-            None, extract_frames, resized_path, frames_dir, preview_seconds
-        )
-        upd("processing", 30, f"Extracted {total_frames} frames @ {fps:.1f} fps.")
+            # ── Resize ────────────────────────────────────────────────────────
+            upd("processing", 12, "Checking resolution…")
+            loop = asyncio.get_event_loop()
+            info = get_video_info(vid_path)
+            in_w = int(info.get("width", 0) or 0)
+            in_h = int(info.get("height", 0) or 0)
+            orientation = info.get("orientation", "unknown")
+            db.update_job(job_id, {
+                "input_width": in_w,
+                "input_height": in_h,
+                "orientation": orientation,
+            })
+            resized_path = vid_path
+            need_resize = (height > 0 and max(in_w, in_h) > height) or (resize_mode == "crop_portrait")
+            if need_resize:
+                resized_path = vid_path.replace(Path(vid_path).suffix, f"_{height}p_{resize_mode}.mp4")
+                upd("processing", 14, f"Preparing {orientation} video…")
+                await loop.run_in_executor(None, resize_video, vid_path, resized_path, height, resize_mode)
+            else:
+                upd("processing", 14, f"Resolution OK ({in_w}x{in_h}).")
 
-        if total_frames == 0:
-            raise FaceSwapError("No frames extracted. Video may be corrupt.")
-
-        # ── Source face ───────────────────────────────────────────────────
-        upd("processing", 32, "Analysing source face…")
-        source_face = await loop.run_in_executor(None, swapper.get_source_face, img_path)
-        if source_face is None:
-            raise FaceSwapError("No face detected in source image. Upload a clear frontal face photo.")
-
-        # ── Similarity check ──────────────────────────────────────────────
-        upd("processing", 34, "Checking face similarity…")
-        # Sample the first extracted frame
-        from pathlib import Path as _P
-        sample_frames = sorted(_P(frames_dir).glob("frame_*.jpg"))
-        sim_score = 0.0
-        if sample_frames:
-            mid_frame = str(sample_frames[min(5, len(sample_frames) - 1)])
-            sim_score = await loop.run_in_executor(
-                None, swapper.check_face_similarity, source_face, mid_frame
+            # ── Extract frames ────────────────────────────────────────────────
+            suffix  = "_preview" if is_preview else ""
+            frames_dir  = str(FRAMES_DIR / f"{job_id}{suffix}")
+            upd("processing", 16, "Extracting frames…")
+            fps, total_frames, audio_path = await loop.run_in_executor(
+                None, extract_frames, resized_path, frames_dir, preview_seconds
             )
-        JOBS[job_id].update({"similarity_score": round(sim_score, 3)})
+            upd("processing", 30, f"Extracted {total_frames} frames.")
 
-        # ── Face swap ─────────────────────────────────────────────────────
-        processed_dir = str(FRAMES_DIR / f"{job_id}_out")
-        stage_label   = "enhancing" if qmode != QualityMode.FAST else "processing"
-        upd(stage_label, 36, f"Running face swap [{quality.upper()}] on {device}…")
-        swapped, skipped = await loop.run_in_executor(
-            None,
-            swapper.process_video_optimized,
-            source_face,
-            frames_dir,
-            processed_dir,
-            qmode,
-            face_index,
-            None,          # max_frames (None = all)
-            JOBS,
-            job_id,
-            36,            # progress_start
-            78,            # progress_end
-        )
-        upd("rendering", 80, f"Swap complete — {swapped} faces swapped, {skipped} skipped.")
+            if total_frames == 0:
+                raise FaceSwapError("No frames extracted. Video may be corrupt.")
 
-        if swapped == 0:
-            raise FaceSwapError(
-                "No faces found in any video frame. "
-                "Ensure the target video contains a clearly visible face."
+            # ── Source face ───────────────────────────────────────────────────
+            upd("processing", 32, "Analysing source face…")
+            source_face = await loop.run_in_executor(None, swapper.get_source_face, img_path)
+            if source_face is None:
+                raise FaceSwapError("No face detected in source image.")
+
+            # ── Similarity check ──────────────────────────────────────────────
+            upd("processing", 34, "Checking face similarity…")
+            from pathlib import Path as _P
+            sample_frames = sorted(_P(frames_dir).glob("frame_*.jpg"))
+            sim_score = 0.0
+            if sample_frames:
+                mid_frame = str(sample_frames[len(sample_frames) // 2])
+                sim_score = await loop.run_in_executor(
+                    None, swapper.check_face_similarity, source_face, mid_frame
+                )
+            db.update_job(job_id, {"similarity_score": round(sim_score, 3)})
+
+            # ── Face swap ─────────────────────────────────────────────────────
+            processed_dir = str(FRAMES_DIR / f"{job_id}_out")
+            stage_label   = "enhancing" if qmode != QualityMode.FAST else "processing"
+            upd(stage_label, 36, f"Swapping faces on {device}…")
+            prog_start, prog_end = 36, 78
+
+            swapped, skipped = await loop.run_in_executor(
+                None,
+                swapper.process_video_optimized,
+                source_face,
+                frames_dir,
+                processed_dir,
+                qmode,
+                face_index,
+                None,
+                prog_start,
+                prog_end,
+                db,
+                job_id,
+            )
+            upd("rendering", 80, f"Swap complete ({swapped} swapped).")
+
+            if swapped == 0:
+                raise FaceSwapError("No faces found in target video.")
+
+            # ── Audio ─────────────────────────────────────────────────────────
+            if is_preview: audio_path = None
+
+            # ── Rebuild video ─────────────────────────────────────────────────
+            kind_tag   = "preview" if is_preview else "output"
+            out_file   = f"personaforge_{kind_tag}_{session_id[:8]}_{job_id[:8]}.mp4"
+            out_path   = str(OUTPUTS_DIR / out_file)
+            upd("rendering", 82, "Encoding final video…")
+            await loop.run_in_executor(
+                None, rebuild_video, processed_dir, audio_path, out_path, fps,
+                bitrate, mode == "cpu",
             )
 
-        # ── Audio (skip for previews) ─────────────────────────────────────
-        if is_preview:
-            audio_path = None  # Don't attach audio to preview clips
+            # ── Done ──────────────────────────────────────────────────────────
+            size_mb   = get_file_size_mb(out_path)
+            total_sec = time.perf_counter() - t_total
+            db.update_job(job_id, {
+                "status":       "done",
+                "stage":        "done",
+                "progress":     100,
+                "message":      f"✓ Done in {total_sec:.1f}s! ({size_mb:.1f} MB)",
+                "output":       out_file,
+                "file_size_mb": round(size_mb, 2),
+            })
+            logger.info("[%s] Job finished in %.1fs", job_id[:8], total_sec)
 
-        # ── Rebuild video ─────────────────────────────────────────────────
-        kind_tag   = "preview" if is_preview else "output"
-        out_file   = f"personaforge_{kind_tag}_{session_id[:8]}_{job_id[:8]}.mp4"
-        out_path   = str(OUTPUTS_DIR / out_file)
-        upd("rendering", 82, f"Encoding video (bitrate={bitrate})…")
-        await loop.run_in_executor(
-            None, rebuild_video, processed_dir, audio_path, out_path, fps,
-            bitrate, mode == "cpu",   # cpu_mode flag for ultrafast preset
-        )
-
-        # ── Wrap up ───────────────────────────────────────────────────────
-        size_mb   = get_file_size_mb(out_path)
-        total_sec = time.perf_counter() - t_total
-        JOBS[job_id].update({
-            "status":       "done",
-            "stage":        "done",
-            "progress":     100,
-            "message":      f"✓ Done in {total_sec:.1f}s! File: {size_mb:.1f} MB.",
-            "output":       out_file,
-            "file_size_mb": round(size_mb, 2),
-        })
-        logger.info("[%s] Pipeline done in %.1fs, output=%s", job_id[:8], total_sec, out_file)
-
-    except FaceSwapError as e:
-        JOBS[job_id].update({"status": "error", "stage": "error", "message": str(e)})
-        logger.error("[%s] FaceSwapError: %s", job_id[:8], e)
-    except Exception as e:
-        JOBS[job_id].update({"status": "error", "stage": "error", "message": f"Unexpected error: {e}"})
-        logger.exception("[%s] Unexpected error", job_id[:8])
+        except FaceSwapError as e:
+            db.update_job(job_id, {"status": "error", "stage": "error", "message": str(e)})
+            logger.error("[%s] Pipeline error: %s", job_id[:8], e)
+        except Exception as e:
+            db.update_job(job_id, {"status": "error", "stage": "error", "message": f"System error: {e}"})
+            logger.exception("[%s] Unexpected crash", job_id[:8])
+        finally:
+            # Robust cleanup of temporary assets
+            clean_paths = []
+            if frames_dir: clean_paths.append(frames_dir)
+            if processed_dir: clean_paths.append(processed_dir)
+            if resized_path and resized_path != vid_path: clean_paths.append(resized_path)
+            if clean_paths:
+                cleanup_temp_dirs(*clean_paths)
+                logger.info("[%s] Cleaned temporary frames.", job_id[:8])
 
 
 # ─── Entry Point ───────────────────────────────────────────────────────────────
