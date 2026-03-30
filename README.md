@@ -1,47 +1,65 @@
 <div align="center">
-    <img src="static/assets/Persona_Forge_Ai_Banner.jpeg" width="900" alt="PersonaForge AI Banner">
+  <img src="static/assets/Persona_Forge_Ai_Banner.jpeg" width="900" alt="PersonaForge AI Banner">
   
   # 🎭 PersonaForge AI
   **The ultimate production-grade video face transformation engine.**
+
+  [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+  [![CUDA GPU](https://img.shields.io/badge/CUDA-GPU%20Accelerated-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-zone)
+  [![FastAPI](https://img.shields.io/badge/FastAPI-Production%20Ready-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 </div>
 
-![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
-![CUDA](https://img.shields.io/badge/CUDA-GPU%20Accelerated-76B900?logo=nvidia&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-Production%20Ready-009688?logo=fastapi&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Active%20Development-2EA043)
+---
 
-## 🚀 Overview
-PersonaForge AI is a high-performance video face-swapping platform designed to deliver production-grade results even on consumer-grade hardware. While most face-swapping tools require high-end GPUs to be usable, PersonaForge features a **Hardware-Aware Dual-Pipeline** that automatically adapts its processing logic to your system's capabilities.
+## 🚀 Project Vision
+**PersonaForge AI** is a high-performance face-swapping platform engineered for production-grade results across diverse hardware profiles. Unlike traditional tools that strictly require high-end workstations, PersonaForge features an **Intelligent Hardware-Aware Dispatcher** that dynamically optimizes its processing logic between high-fidelity GPU paths and efficient CPU fallbacks.
 
-It solves the "accessibility vs. quality" trade-off by offering a zero-compromise GPU path for final renders and a highly optimized CPU fallback for rapid prototyping and low-spec environments.
-
-## 🎬 Demo
-![PersonaForge AI Demo](./static/assets/demo.gif)
-> *Realistic face transformation with temporal consistency and intelligent blending.*
+It bridges the gap between AI research and practical application by offering zero-compromise final renders and high-speed, low-latency previews.
 
 ---
 
-## ✨ Features
+## 🎬 Transformation Showcase
+*See the seamless identity transfer in action with varying lighting and facial orientations.*
 
-### 🧠 Core AI Features
-- **InsightFace Integration:** Leverages state-of-the-art ONNX models for high-fidelity identity transfer.
-- **Hybrid Blending:** Adaptive use of **Poisson (SeamlessClone)** for GPU depth and **Alpha-Compositing** for CPU speed.
-- **Identity Preservation:** Advanced normalization pass to ensure facial features remain consistent under varying lighting.
+### 🎭 Video Demonstrations (GIFs)
+| Cinematic Examples | Motion Stability |
+|:---:|:---:|
+| ![PersonaForge AI Demo](./static/assets/example-1.gif) | ![Temporal Consistency Demo](./static/assets/example-2.gif) |
+| *High-Fidelity Rendering* | *KCF Tracking in Action* |
+
+### 🖼️ Result Analysis (Before & After)
+| Source & Target | Transformation Result |
+|:---:|:---:|
+| ![Source/Target Collage](./static/assets/transformation-collage.jpeg) | ![Final Output Screenshot](./static/assets/final-output.png) |
+| *Input Mapping Collage* | *Integrated Identity Result* |
+
+> [!TIP]
+> Use the **Preview Mode** to generate low-latency GIF previews in seconds to validate your character mapping before committing to a full-resolution render.
+
+---
+
+## ✨ Advanced Features
+
+### 🧠 Core AI Engine
+- **InsightFace Integration:** Leveraging state-of-the-art ONNX models for high-fidelity facial identity transfer.
+- **Hybrid Blending Architecture:** Professional-grade **Poisson (SeamlessClone)** blending for GPU depth and **Alpha-Compositing** for CPU speed.
+- **Identity Normalization:** Advanced color-space pass ensuring consistent facial features under varying ambient light.
 
 ### ⚡ Performance Engineering
-- **Hardware-Aware Dispatcher:** Intelligent routing that switches the entire execution logic—not just the backend—based on available CUDA providers.
-- **Temporal Face Tracking:** Uses **KCF (Kernelized Correlation Filters)** to bridge frames, reducing heavy AI detection passes by up to 90%.
-- **Adaptive Frame Skipping:** Intelligent 1-in-N processing for CPU previewing without losing scene context.
+- **Hardware-Aware Dispatcher:** Intelligent routing that switches entire processing kernels—not just the backend—based on available CUDA providers.
+- **Temporal Bridge (KCF):** Uses **Kernelized Correlation Filters** to maintain facial stability across frames, reducing heavy AI detection passes by up to 90%.
+- **Adaptive Frame Skip:** Intelligent 1-in-N processing for rapid CPU previewing without sacrificing scene context.
 
-### 🎨 UX & Integration
-- **Zero-Latency Previews:** Fast preview generator to validate swaps before committing to a full render.
-- **Modular Config System:** Separate tuning constants for CPU/GPU paths to ensure stability across hardware profiles.
-- **RESTful API:** Clean FastAPI backend for easy integration into existing creative workflows.
+### 🎨 Workflow & UX
+- **Zero-Latency Previews:** Rapid preview generator for immediate feedback on face-swap accuracy.
+- **Modular Config Profiles:** Discrete tuning constants for CPU/GPU paths ensure rock-solid stability even on low-spec hardware.
+- **RESTful API Core:** A clean, documented FastAPI backend designed for easy integration into existing creative pipelines.
 
 ---
 
-## 🧠 System Architecture
-The system follows a modular dispatcher pattern, ensuring the "Brain" (Inference) is decoupled from the "Muscle" (Hardware Logic).
+## 🧠 Technical Architecture
+The system utilizes a modular decoupled pattern, separating the **Inference Brain** from the **Hardware Logic**.
 
 ```mermaid
 flowchart TD
@@ -67,7 +85,7 @@ flowchart TD
     end
     
     ENC[Video Reconstruction<br/>FFmpeg NVENC/Ultrafast]
-    OUT[Resulting Transformation]
+    OUT[Final High-Res Export]
 
     U1 --> API
     U2 --> API
@@ -91,145 +109,71 @@ flowchart TD
 
 ---
 
-## 🧠 Key Engineering Decisions
+## 📊 Performance Benchmarks
+*Tested with a 10-second 720p @ 30fps source video.*
 
-### 1. The Dual-Pipeline Architecture
-Instead of a simple "if/else" for CUDA, I built two distinct processing loops. The CPU path isn't just a slower version of the GPU path; it uses **proxy downscaling** and **simplified compositing** to ensure a usable 1-2 FPS experience on a laptop, where the GPU path would simply stall.
-
-### 2. Temporal Bridges (KCF Tracking)
-Running InsightFace detection on every frame is the primary bottleneck. By introducing **Kernelized Correlation Filters**, we "track" the face for 10 frames after a hit. This moves the bottleneck from CPU/GPU inference to memory-efficient tracking, enabling significant speedups.
-
-### 3. Trade-off: Quality vs. Speed
-The **preview mode** uses a 1-in-3 frame skip. While this creates a slightly jittery preview, it allows users to see the character interaction in seconds. The **final render** always defaults to 1:1 frame processing with full Poisson blending.
-
----
-
-## 📊 Example Performance
-*Benchmarks based on a 10-second 720p @ 30fps source video.*
-
-| Environment | Processing Mode | Total Time | Efficiency Gain |
-|---|---|---|---|
-| **NVIDIA RTX 3080** | Full GPU Pipeline | ~42 sec | 1.0x (Baseline) |
-| **Intel i7-11800H** | Optimized CPU (Fast) | ~115 sec | 2.7x speedup vs. Raw CPU |
-| **M1 Macbook Air** | Optimized CPU (Balanced) | ~140 sec | Smooth thermal profile |
-
----
-
-## ⚠️ Limitations
-- **Hardware Delta:** Even with optimizations, the CPU pipeline is ~3x slower than a mid-range GPU for full-quality renders.
-- **Extreme Poses:** Accuracy drops slightly during extreme side profiles or high-velocity head movements (where tracking may lose the target).
-- **Lighting Inconsistency:** While blending is robust, very harsh directional lighting on the source image can sometimes create visible seams in "Direct-Paste" mode.
-
----
-
-## 📁 Project Structure
- ```text
- PersonaForge/
- ├── main.py                    # FastAPI application entry point
- ├── face_swap.py               # Core face-swap engine and dispatcher
- ├── video_utils.py             # FFmpeg/CV2 media utilities
- ├── requirements.txt           # Python dependencies
- ├── environment.yml            # Conda environment (faceswap)
- ├── .gitignore
- ├── config/
- │   ├── config_cpu.py          # CPU tuning profile
- │   └── config_gpu.py          # GPU tuning profile
- ├── models/
- │   └── model_manager.py       # ONNX model validation + download manager
- ├── pipelines/
- │   ├── pipeline_cpu.py        # CPU-optimized pipeline
- │   └── pipeline_gpu.py        # GPU pipeline wrapper
- ├── scripts/
- │   ├── setup_models.py        # Model setup CLI
- │   └── check_gpu.py           # GPU diagnostics CLI
- ├── utils/
- │   └── tracker_factory.py     # Shared OpenCV tracker factory
- ├── tests/
- └── static/
- ```
-
----
-
-## 🛠️ Tech Stack
-- **Backend:** FastAPI, Python 3.10+
-- **Inference:** ONNX Runtime (CUDA / CPU)
-- **Computer Vision:** OpenCV, InsightFace, KCF Tracking
-- **Media Engine:** FFmpeg (libx264 Ultrafast / NVENC)
+| Hardware Environment | Pipeline Mode | Render Time | Efficiency Index |
+|:---:|:---:|:---:|:---:|
+| **NVIDIA RTX 3080** | Full GPU Path | ~42 sec | 🔥 Baseline (1.0x) |
+| **Intel Core i7-11800H** | Optimized CPU (Fast) | ~115 sec | 💎 2.7x vs. Raw CPU |
+| **Apple M1 Air** | Optimized CPU (Balanced) | ~140 sec | ❄️ Thermal Optimized |
 
 ---
 
 ## 📦 Installation & Setup
 
-### 1. Create and Activate Conda Environment
+### 1. Environment Preparation
+It is recommended to use **Conda** for isolated environment management:
+
 ```bash
+# Create and activate environment
 conda env create -f environment.yml
 conda activate personaforge
 ```
 
-If you prefer manual environment creation:
-
+Or via **pip** (Python 3.10+):
 ```bash
-conda create -n personaforge python=3.10 -y
-conda activate personaforge
+python -m venv .venv
+# On Windows
+.venv\Scripts\activate
+# On Linux/MacOS
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Download Required Models
-
-PersonaForge requires ONNX model files (for example `inswapper_128.onnx`) that are not included in this repository.
-
-Use the setup command:
+### 2. Model Initialization
+PersonaForge requires pre-trained ONNX models. Use the automated setup utility to validate and download required assets:
 
 ```bash
 python scripts/setup_models.py
 ```
+*Alternatively, place `inswapper_128.onnx` manually in the `models/` directory.*
 
-What this does:
-
-- checks required model files
-- downloads missing files automatically
-- stores files under the `models/` directory
-
-Manual fallback:
-
-- download from https://huggingface.co/deepinsight/inswapper/resolve/main/inswapper_128.onnx
-- place file at `models/inswapper_128.onnx`
-
-### 3. Start the API Server
+### 3. Launching the App
 ```bash
+# Start the FastAPI server
 python main.py
 ```
-
-Open `http://127.0.0.1:8000` in your browser.
-
-### 4. Optional Diagnostics
-```bash
-python scripts/check_gpu.py
-```
-
-### 5. Quick Start (3 Commands)
-```bash
-conda activate personaforge
-python scripts/setup_models.py
-python main.py
-```
+*Access the dashboard at `http://127.0.0.1:8000`*
 
 ---
 
-## 🖼️ Screenshots
-| Upload Interface | Real-time Preview | Final Transformation |
-|---|---|---|
-| ![Upload UI](./static/assets/upload-ui.png) | ![Preview UI](./static/assets/preview-ui.png) | ![Final Output](./static/assets/final-output.png) |
-
----
-
-## 💡 Why I Built This
-PersonaForge AI was born out of a desire to move AI research from static Jupyter notebooks into a dynamic, production-ready application. My goal was to solve the "GPU Tax"—the idea that you can't build or use high-end AI if you don't have a $1000 graphics card. By engineering the adaptive CPU fallback, I proved that smart software architecture can overcome hardware limitations.
+## 📁 System Structure
+```text
+PersonaForge/
+├── main.py                    # Entry point & API Logic
+├── face_swap.py               # Dispatcher & Engine
+├── video_utils.py             # FFmpeg/OpenCV Media Engine
+├── config/                    # Tuning Constants
+├── models/                    # Validated ONNX Assets
+├── pipelines/                 # Hardware-Specific Loops
+└── utils/                     # Tracking & Tracker Factories
+```
 
 ---
 
 ## 👤 Author
-**Himanshu Jadhav**  
+**Himanshu Jadhav**
 
 [![GitHub](https://img.shields.io/badge/GitHub-himanshu--jadhav108-181717?style=for-the-badge&logo=github)](https://github.com/himanshu-jadhav108)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Himanshu%20Jadhav-0A66C2?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/himanshu-jadhav-328082339)
