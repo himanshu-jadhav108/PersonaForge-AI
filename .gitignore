@@ -43,3 +43,7 @@ brain/
 implementation_plan.md
 task.md
 walkthrough.md
+
+# SQL Database
+*.db
+*.sqlite
