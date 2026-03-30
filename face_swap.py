@@ -183,10 +183,10 @@ class FaceSwapper:
         quality:     "QualityMode" = None,
         face_index:  int          = -1,
         max_frames:  Optional[int] = None,
-        job_status:  dict         = None,
+        progress_start: int       = 36,
+        progress_end:   int       = 78,
+        db_manager                = None,
         job_id:      str          = None,
-        progress_start: int       = 40,
-        progress_end:   int       = 80,
     ) -> tuple[int, int]:
         """
         Route to GPU or CPU pipeline based on detected hardware.
@@ -204,10 +204,10 @@ class FaceSwapper:
                 quality        = quality if quality is not None else QualityMode.BALANCED,
                 face_index     = face_index,
                 max_frames     = max_frames,
-                job_status     = job_status,
-                job_id         = job_id,
                 progress_start = progress_start,
                 progress_end   = progress_end,
+                db_manager     = db_manager,
+                job_id         = job_id,
             )
         else:
             from pipelines.pipeline_cpu import process_video_cpu
@@ -219,10 +219,10 @@ class FaceSwapper:
                 output_dir     = output_dir,
                 face_index     = face_index,
                 max_frames     = max_frames,
-                job_status     = job_status,
-                job_id         = job_id,
                 progress_start = progress_start,
                 progress_end   = progress_end,
+                db_manager     = db_manager,
+                job_id         = job_id,
             )
 
     # ── Source Face ────────────────────────────────────────────────────────────
@@ -275,10 +275,10 @@ class FaceSwapper:
         quality:     QualityMode = QualityMode.BALANCED,
         face_index:  int         = -1,   # -1 = all faces
         max_frames:  Optional[int] = None,  # None = all; N = preview mode
-        job_status:  dict        = None,
+        progress_start: int      = 36,
+        progress_end:   int      = 78,
+        db_manager                = None,
         job_id:      str         = None,
-        progress_start: int      = 40,
-        progress_end:   int      = 80,
     ) -> tuple[int, int]:
         """
         Core processing loop.
@@ -410,15 +410,13 @@ class FaceSwapper:
                 write_futures.clear()
 
             # ── Progress ───────────────────────────────────────────────────
-            if job_status is not None and job_id is not None:
-                if job_id not in job_status:
-                    continue
+            if db_manager is not None and job_id is not None:
                 span = progress_end - progress_start
                 pct  = progress_start + int((i + 1) / total * span)
-                job_status[job_id]["progress"] = pct
-                job_status[job_id]["message"]  = (
-                    f"Frame {i+1}/{total} — swapped={swapped}, skipped={skipped}"
-                )
+                db_manager.update_job(job_id, {
+                    "progress": pct,
+                    "message": f"Frame {i+1}/{total} — swapped={swapped}, skipped={skipped}"
+                })
 
         # Drain remaining writes
         for f in write_futures:
