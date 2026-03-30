@@ -94,15 +94,18 @@ def _portrait_crop_plan(width: int, height: int) -> tuple[str, int, int] | None:
 
 # ─── FFmpeg Helper ─────────────────────────────────────────────────────────────
 
-def _run_ffmpeg(cmd: list[str], label: str = "ffmpeg") -> subprocess.CompletedProcess:
+def _run_ffmpeg(cmd: list[str], label: str = "ffmpeg", timeout: int = 600) -> subprocess.CompletedProcess:
     logger.debug("[%s] Running: %s", label, " ".join(cmd))
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"[{label}] ffmpeg exited {result.returncode}.\n"
-            f"STDERR:\n{result.stderr[-3000:]}"
-        )
-    return result
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"[{label}] ffmpeg exited {result.returncode}.\n"
+                f"STDERR:\n{result.stderr[-3000:]}"
+            )
+        return result
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"[{label}] ffmpeg process timed out after {timeout}s.")
 
 
 def _has_nvenc() -> bool:
@@ -111,9 +114,10 @@ def _has_nvenc() -> bool:
         result = subprocess.run(
             ["ffmpeg", "-hide_banner", "-encoders"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            timeout=10,
         )
         return "h264_nvenc" in result.stdout
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
@@ -127,9 +131,12 @@ def get_video_info(video_path: str) -> dict:
         "-show_streams", "-show_format",
         video_path,
     ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffprobe failed: {result.stderr}")
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffprobe failed: {result.stderr}")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("ffprobe timed out after 30s")
 
     data = json.loads(result.stdout)
     info: dict = {}
@@ -422,5 +429,11 @@ def cleanup_temp_dirs(*dirs: str) -> None:
     for d in dirs:
         p = Path(d)
         if p.exists():
-            shutil.rmtree(p, ignore_errors=True)
-            logger.debug("Cleaned: %s", d)
+            try:
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    p.unlink(missing_ok=True)
+                logger.debug("Cleaned: %s", d)
+            except Exception as e:
+                logger.warning("Failed to clean '%s': %s", d, e)
