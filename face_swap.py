@@ -37,9 +37,9 @@ class QualityMode(str, Enum):
 
 # Per-mode JPEG quality for intermediate frames
 _JPEG_QUALITY = {
-    QualityMode.FAST:     85,
-    QualityMode.BALANCED: 92,
-    QualityMode.HIGH:     97,
+    QualityMode.FAST:     88,
+    QualityMode.BALANCED: 95,
+    QualityMode.HIGH:     99,
 }
 
 # ── Tuning Constants ──────────────────────────────────────────────────────────
@@ -165,6 +165,21 @@ class FaceSwapper:
         except Exception as e:
             logger.error("Failed to load swap model: %s", e)
             raise
+
+        # ─── Warm up ──────────────────────────────────────────────────────────
+        self._warm_up()
+
+    def _warm_up(self) -> None:
+        """Perform a dummy inference to warm up the ONNX/CUDA engine."""
+        logger.info("Warming up AI engine…")
+        try:
+            # Create a small dummy face and frame
+            dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
+            # Detect (even if it finds nothing, it warms up the detector)
+            self._app.get(dummy_frame)
+            logger.info("AI engine warmed up successfully.")
+        except Exception as e:
+            logger.warning("Warm-up failed (non-critical): %s", e)
 
     def get_execution_provider(self) -> str:
         return "GPU" if "CUDAExecutionProvider" in self._providers else "CPU"
@@ -451,10 +466,10 @@ def _enhance_crop(img: np.ndarray, quality: QualityMode) -> np.ndarray:
         blurred = cv2.GaussianBlur(img, (0, 0), 2.5)
         return cv2.addWeighted(img, 1.3, blurred, -0.3, 0)
     else:  # HIGH
-        # Stronger bilateral filter to smooth + then sharpen
-        smooth = cv2.bilateralFilter(img, d=9, sigmaColor=75, sigmaSpace=75)
-        blurred = cv2.GaussianBlur(smooth, (0, 0), 3)
-        return cv2.addWeighted(smooth, 1.5, blurred, -0.5, 0)
+        # Advanced bilateral filter to smooth + stronger unsharp mask for clarity
+        smooth = cv2.bilateralFilter(img, d=7, sigmaColor=65, sigmaSpace=65)
+        blurred = cv2.GaussianBlur(smooth, (0, 0), 2)
+        return cv2.addWeighted(smooth, 1.6, blurred, -0.6, 0)
 
 
 def _blend_crop(
