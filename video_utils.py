@@ -342,8 +342,9 @@ def rebuild_video(
     audio_path:  str | None,
     output_path: str,
     fps:         float,
-    bitrate:     str = "3M",
+    bitrate:     str = "6M",
     cpu_mode:    bool = False,
+    is_preview:  bool = False,
 ) -> str:
     """
     Reconstruct an MP4 from JPEG frames.
@@ -353,9 +354,10 @@ def rebuild_video(
         audio_path:  Optional AAC audio file to mux in.
         output_path: Output MP4 path.
         fps:         Frame rate.
-        bitrate:     Target video bitrate e.g. "1M", "3M", "6M".
-        cpu_mode:    If True, force libx264 ultrafast (CPU pipeline).
-                     If False (default), use NVENC when available (GPU pipeline).
+        bitrate:     Target video bitrate e.g. "2M", "6M", "12M".
+        cpu_mode:    If True, force libx264 (CPU pipeline).
+        is_preview:  If True, use "ultrafast" preset for rapid generation.
+                     If False (default), use "medium" for better quality.
 
     Uses h264_nvenc (GPU) if available and not cpu_mode, else libx264 ultrafast/medium.
     """
@@ -372,18 +374,20 @@ def rebuild_video(
 
     if use_nvenc:
         logger.info("Using NVENC encoder.")
+        # p2 is a faster preset for previews, p4 is standard quality
+        preset_nv = "p2" if is_preview else "p4"
         cmd_video = [
             "ffmpeg", "-y",
             "-framerate", str(int(fps)),
             "-i", frame_pattern,
             "-c:v", "h264_nvenc",
-            "-preset", "p4",
+            "-preset", preset_nv,
             "-b:v", bitrate,
             "-pix_fmt", "yuv420p",
             tmp_video,
         ]
     else:
-        preset = "ultrafast" if cpu_mode else "medium"
+        preset = "ultrafast" if is_preview else "medium"
         logger.info("%s encoder (preset=%s).", "CPU libx264" if cpu_mode else "libx264 (NVENC unavail)", preset)
         cmd_video = [
             "ffmpeg", "-y",
