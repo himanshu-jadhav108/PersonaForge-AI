@@ -17,8 +17,7 @@ temp_frames/
 uploads/
 outputs/
 *.mp4
-*.png
-*.gif
+
 
 # Models (Large binaries)
 models/
