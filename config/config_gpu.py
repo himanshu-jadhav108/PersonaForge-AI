@@ -24,7 +24,7 @@ FFMPEG_PRESET: str = "medium"      # Used only for libx264 fallback; NVENC = p4
 
 # ── I/O Threading ────────────────────────────────────────────────────────────
 JPEG_QUALITY: int = 92
-WRITE_WORKERS: int = 4
+WRITE_WORKERS: int = 8
 
 # ── Blending ──────────────────────────────────────────────────────────────────
 USE_SEAMLESS_CLONE: bool = True    # Full seamlessClone blending
