@@ -90,9 +90,9 @@ def _update(job_id: str, status: str, stage: str, progress: int, message: str, *
 
 # ─── Quality → bitrate & target height map ─────────────────────────────────────
 _QUALITY_CONFIG = {
-    "fast":     {"height": 480, "bitrate": "1M"},
-    "balanced": {"height": 720, "bitrate": "3M"},
-    "high":     {"height": 0,   "bitrate": "6M"},  # 0 = original resolution
+    "fast":     {"height": 480, "bitrate": "2M"},
+    "balanced": {"height": 720, "bitrate": "6M"},
+    "high":     {"height": 0,   "bitrate": "12M"},  # 0 = original resolution
 }
 
 # ─── FastAPI App ───────────────────────────────────────────────────────────────
@@ -141,9 +141,12 @@ async def lifespan(app: FastAPI):
         # 3. Initialize Shared Swapper (Singleton)
         logger.info("[lifespan] Initializing global FaceSwapper (this may take a moment)…")
         app.state.swapper = FaceSwapper()
+        # Warm up the AI engine while user is browsing
+        app.state.swapper._warm_up()
 
         # 4. Start cleanup task
         app.state.cleanup_task = asyncio.create_task(auto_cleanup_loop())
+
     except Exception as exc:
         logger.error("[lifespan] Initialization failed: %s", exc)
         # We don't raise here if we want the app to still start (e.g. for inspection), 
@@ -369,11 +372,11 @@ async def _run_pipeline(
             })
             upd("processing", 10, f"Using {device} pipeline.", device=device)
 
-            # ── CPU override: lock to 480p + 1M regardless of requested quality ───
+            # ── CPU override: allow up to 720p + 3M, but still slower than GPU ───
             if mode == "cpu":
-                height  = min(height, 480) if height > 0 else 480
-                bitrate = "1M"
-                upd("processing", 11, "Running in CPU optimized mode…")
+                height  = min(height, 720) if height > 0 else 720
+                bitrate = "3M"
+                upd("processing", 11, "Running in CPU mode (720p limit)…")
             else:
                 upd("processing", 11, "Running in GPU mode…")
 
@@ -463,7 +466,7 @@ async def _run_pipeline(
             upd("rendering", 82, "Encoding final video…")
             await loop.run_in_executor(
                 None, rebuild_video, processed_dir, audio_path, out_path, fps,
-                bitrate, mode == "cpu",
+                bitrate, mode == "cpu", is_preview,
             )
 
             # ── Done ──────────────────────────────────────────────────────────
