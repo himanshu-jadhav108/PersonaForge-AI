@@ -873,30 +873,23 @@
     <!-- Log console -->
     <div class="log-console" id="logConsole"></div>
 
-    <!-- Download block -->
-    <div class="download-block" id="downloadBlock">
-      <div class="download-info" id="downloadInfo">✓ Face swap complete.</div>
-      <div class="download-btns">
-        <a class="btn btn-green btn-sm" id="downloadLink" href="#" download>
-          ↓ Download Output
-        </a>
-        <button class="btn btn-ghost btn-sm" onclick="resetApp()">
-          ↺ Process Another
-        </button>
-      </div>
-    </div>
-
-    <div class="result-section" id="resultSection" style="margin-top:16px;">
+    <!-- Transformation Result Area -->
+    <div class="result-section" id="resultSection" style="margin-top:24px;">
+      <div class="divider"></div>
+      <div class="card-title" style="margin-bottom:6px;">✨ Final Transformation</div>
+      <div class="card-sub" id="downloadInfo">✓ Analysis and swap complete. Ready for export.</div>
+      
       <div class="video-wrap">
         <video id="resultVideo" controls playsinline preload="metadata" autoplay muted></video>
       </div>
-      <div style="font-family:var(--mono);font-size:11px;color:var(--green);margin-bottom:12px;">
-        ✓ Final output preview is ready.
-      </div>
-      <div class="result-actions">
-        <a class="btn btn-green btn-sm" id="resultDownloadLink" href="#" download>
-          ↓ Download This Video
+      
+      <div class="result-actions" style="margin-top:16px;">
+        <a class="btn btn-green" id="resultDownloadLink" href="#" download>
+          ↓ Download Output Video
         </a>
+        <button class="btn btn-ghost" onclick="resetApp()">
+          ↺ Process Another
+        </button>
       </div>
     </div>
 
@@ -1060,6 +1053,8 @@ async function doUpload() {
 
   uploadBtn.disabled = true;
   uploadBtn.textContent = '↑ Uploading…';
+  document.getElementById('resultSection').classList.remove('visible');
+  document.getElementById('resultVideo').removeAttribute('src');
   setStageProgress('upload', 40);
 
   const form = new FormData();
@@ -1137,7 +1132,7 @@ async function doProcess() {
   setStageProgress('process', 5);
   setStageProgress('enhance', 0);
   setStageProgress('render', 0);
-  document.getElementById('downloadBlock').classList.remove('visible');
+  document.getElementById('resultSection').classList.remove('visible');
 
   const fi = allFacesTgl.checked ? -1 : parseInt(document.getElementById('faceIdxInput').value || '0');
   const params = new URLSearchParams({
@@ -1235,19 +1230,14 @@ function updateProgress(data, kind) {
     previewBtn.textContent = '▶ Preview Generated';
   }
 
-  // Full done → show download
+  // Full done → show result player & download
   if (kind === 'full' && data.status === 'done' && data.output) {
-    const dl   = document.getElementById('downloadBlock');
-    const link = document.getElementById('downloadLink');
-    link.href     = `/download/${data.output}`;
-    link.download = data.output;
     const resultLink = document.getElementById('resultDownloadLink');
-    resultLink.href = `/download/${data.output}`;
+    resultLink.href     = `/download/${data.output}`;
     resultLink.download = data.output;
-    const sizeTxt = data.file_size_mb ? ` · ${data.file_size_mb} MB` : '';
+    const sizeTxt = data.file_size_mb ? ` (${data.file_size_mb} MB)` : '';
     document.getElementById('downloadInfo').textContent =
-      `✓ Face swap complete${sizeTxt} — ready to download.`;
-    dl.classList.add('visible');
+      `✓ Face swap complete${sizeTxt} — high-fidelity render ready.`;
     showResultPlayer(data.output);
     setStageProgress('render', 100);
     addLog(`Output: ${data.output}${sizeTxt}`, 'ok');
@@ -1381,14 +1371,10 @@ async function loadHistory() {
 }
 
 function openResultFromHistory(filename) {
-  const downloadLink = document.getElementById('downloadLink');
   const resultLink = document.getElementById('resultDownloadLink');
-  downloadLink.href = `/download/${filename}`;
-  downloadLink.download = filename;
   resultLink.href = `/download/${filename}`;
   resultLink.download = filename;
-  document.getElementById('downloadInfo').textContent = `✓ Selected output: ${filename}`;
-  document.getElementById('downloadBlock').classList.add('visible');
+  document.getElementById('downloadInfo').textContent = `✓ Loaded output: ${filename}`;
   showProgressCard();
   showResultPlayer(filename);
 }
@@ -1429,7 +1415,7 @@ function resetApp() {
   document.getElementById('resultSection').classList.remove('visible');
   document.getElementById('resultVideo').removeAttribute('src');
   document.getElementById('resultVideo').load();
-  document.getElementById('downloadBlock').classList.remove('visible');
+  document.getElementById('downloadInfo').textContent = '✓ Analysis and swap complete. Ready for export.';
   document.getElementById('logConsole').innerHTML = '';
   document.getElementById('metaRow').innerHTML    = '';
   clearErrors();
