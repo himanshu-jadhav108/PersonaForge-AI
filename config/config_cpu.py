@@ -32,10 +32,6 @@ ENHANCEMENT_ENABLED: bool = False   # Skip GFPGAN / bilateral / unsharp
 FFMPEG_PRESET: str = "ultrafast"
 BITRATE: str = "1M"
 
-# ── I/O Threading ────────────────────────────────────────────────────────────
-JPEG_QUALITY: int = 82              # Lower quality = faster writes
-WRITE_WORKERS: int = 2              # Fewer threads → less context-switch overhead
-
 # ── Blending ──────────────────────────────────────────────────────────────────
 # Seamless clone is CPU-heavy; use direct paste in CPU mode.
 USE_SEAMLESS_CLONE: bool = False

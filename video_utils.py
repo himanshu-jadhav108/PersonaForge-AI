@@ -10,10 +10,10 @@ Features:
   - File size helper
 """
 
-import os
 import json
-import shutil
 import logging
+import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -34,8 +34,24 @@ def detect_orientation(width: int, height: int) -> str:
 
 def _even(value: float) -> int:
     """Return a positive even integer suitable for H.264 dimensions."""
-    iv = max(2, int(round(value)))
+    iv = max(2, round(value))
     return iv if iv % 2 == 0 else iv - 1
+
+
+def compute_mode_resolution(width: int, height: int, max_target_height: int) -> tuple[int, int]:
+    """
+    Dynamically scale resolution capped at max_target_height without upscaling smaller videos.
+    Always returns positive even dimensions suitable for H.264 video encoding.
+    """
+    if width <= 0 or height <= 0:
+        return 0, 0
+    if max_target_height <= 0 or height <= max_target_height:
+        return _even(width), _even(height)
+
+    scale = float(max_target_height) / float(height)
+    out_w = _even(round(width * scale))
+    out_h = _even(max_target_height)
+    return out_w, out_h
 
 
 def compute_resize_dimensions(
@@ -307,6 +323,10 @@ def get_ffmpeg_writer(
     """
     use_nvenc = (not cpu_mode) and _has_nvenc()
     
+    # Ensure even dimensions for H.264 compatibility
+    width = _even(width)
+    height = _even(height)
+
     cmd = [
         "ffmpeg", "-y",
         "-f", "rawvideo",
@@ -338,7 +358,7 @@ def get_ffmpeg_writer(
     cmd.append(output_path)
     
     logger.info("Starting FFMPEG writer: %s", " ".join(cmd))
-    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 def mux_audio(video_path: str, audio_path: str | None, final_output_path: str) -> str:
     """

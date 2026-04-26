@@ -22,10 +22,6 @@ ENHANCEMENT_ENABLED: bool = True   # Bilateral / unsharp-mask quality pass
 FFMPEG_PRESET: str = "medium"      # Used only for libx264 fallback; NVENC = p4
 # Bitrate is chosen per quality level in main.py (_QUALITY_CONFIG) — unchanged.
 
-# ── I/O Threading ────────────────────────────────────────────────────────────
-JPEG_QUALITY: int = 92
-WRITE_WORKERS: int = 8
-
 # ── Blending ──────────────────────────────────────────────────────────────────
 USE_SEAMLESS_CLONE: bool = True    # Full seamlessClone blending
 
