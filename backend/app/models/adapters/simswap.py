@@ -13,11 +13,10 @@ class SimSwapAdapter(BaseSwapModel):
         self._model = "stub_loaded"
 
     def swap_face(self, frame: np.ndarray, target_face, source_face) -> np.ndarray:
-        if not self._model:
-            raise RuntimeError("SimSwapAdapter: Model is not loaded.")
-        logger.warning("SimSwapAdapter: swap_face called on stub. Bypassing swap.")
-        # Return the original frame as a placeholder
-        return frame.copy()
+        raise NotImplementedError(
+            "SimSwapAdapter is a stub and is not yet implemented. "
+            "Please use the standard 'inswapper' model for active face swapping."
+        )
 
     def validate_input(self, target_face, source_face) -> bool:
         return target_face is not None and source_face is not None

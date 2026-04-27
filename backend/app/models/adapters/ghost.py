@@ -13,10 +13,10 @@ class GhostAdapter(BaseSwapModel):
         self._model = "stub_loaded"
 
     def swap_face(self, frame: np.ndarray, target_face, source_face) -> np.ndarray:
-        if not self._model:
-            raise RuntimeError("GhostAdapter: Model is not loaded.")
-        logger.warning("GhostAdapter: swap_face called on stub. Bypassing swap.")
-        return frame.copy()
+        raise NotImplementedError(
+            "GhostAdapter is a stub and is not yet implemented. "
+            "Please use the standard 'inswapper' model for active face swapping."
+        )
 
     def validate_input(self, target_face, source_face) -> bool:
         return target_face is not None and source_face is not None

@@ -1,12 +1,23 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 import logging
-from aiortc import RTCPeerConnection, RTCSessionDescription
 import json
 import os
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from backend.app.realtime.webrtc import FaceSwapVideoStreamTrack
-from backend.app.realtime.stream_processor import RealTimeProcessor
+try:
+    from aiortc import RTCPeerConnection, RTCSessionDescription
+    AIORTC_AVAILABLE = True
+except ImportError:
+    AIORTC_AVAILABLE = False
+    RTCPeerConnection = None
+    RTCSessionDescription = None
+
+try:
+    from backend.app.realtime.webrtc import FaceSwapVideoStreamTrack
+    from backend.app.realtime.stream_processor import RealTimeProcessor
+except ImportError:
+    FaceSwapVideoStreamTrack = None
+    RealTimeProcessor = None
 
 router = APIRouter(prefix="/realtime", tags=["Realtime"])
 logger = logging.getLogger("personaforge.realtime.router")
@@ -23,13 +34,16 @@ global_processor = None
 
 @router.on_event("shutdown")
 async def on_shutdown():
-    coros = [pc.close() for pc in pcs]
-    import asyncio
-    await asyncio.gather(*coros)
-    pcs.clear()
+    if pcs:
+        coros = [pc.close() for pc in pcs]
+        import asyncio
+        await asyncio.gather(*coros)
+        pcs.clear()
 
 @router.post("/offer")
 async def offer(params: OfferSchema):
+    if not AIORTC_AVAILABLE:
+        raise HTTPException(status_code=503, detail="WebRTC streaming is unavailable because 'aiortc' is not installed.")
     global global_processor
     
     if not os.path.exists(params.source_image_path):

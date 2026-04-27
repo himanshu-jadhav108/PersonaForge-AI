@@ -1,8 +1,12 @@
 from fastapi import APIRouter, HTTPException
-import psutil
 import json
 from pathlib import Path
 from typing import Dict, Any, List
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 from utils.database import JobDB
 
@@ -65,8 +69,13 @@ async def get_performance() -> Dict[str, Any]:
 
 @router.get("/system")
 async def get_system_health() -> Dict[str, Any]:
-    cpu_percent = psutil.cpu_percent(interval=0.1)
-    mem = psutil.virtual_memory()
+    if psutil is not None:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        mem = psutil.virtual_memory()
+        mem_percent = mem.percent
+    else:
+        cpu_percent = 0.0
+        mem_percent = 0.0
     
     # GPUtil optional
     gpu_percent = 0
@@ -80,7 +89,7 @@ async def get_system_health() -> Dict[str, Any]:
         
     return {
         "cpu_utilization": cpu_percent,
-        "memory_utilization": mem.percent,
+        "memory_utilization": mem_percent,
         "gpu_utilization": round(gpu_percent, 2)
     }
 

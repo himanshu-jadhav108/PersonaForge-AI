@@ -11,17 +11,19 @@ Endpoints:
   GET  /jobs          → list recent jobs (history)
 """
 
+import os
+import re
 import time
 import uuid
 import logging
 import asyncio
-import datetime
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 
+import cv2
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,8 +32,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from video_utils import (
     extract_audio, mux_audio, resize_video,
     get_video_info, get_file_size_mb, cleanup_temp_dirs,
+    compute_mode_resolution,
 )
-from face_swap import FaceSwapper, FaceSwapError, QualityMode
 from face_swap import FaceSwapper, FaceSwapError, QualityMode
 from models.model_manager import check_models
 from utils.database import JobDB
@@ -107,27 +109,67 @@ _QUALITY_CONFIG = {
 
 # ─── FastAPI App ───────────────────────────────────────────────────────────────
 # ─── App Lifespan ─────────────────────────────────────────────────────────────
+# ─── Configuration & Security ──────────────────────────────────────────────────
+RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
+SESSION_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
+
+def validate_session_id(session_id: str) -> bool:
+    """Validate session_id to prevent directory traversal or unexpected input."""
+    return bool(session_id and SESSION_ID_PATTERN.match(session_id))
+
+def validate_media_magic_bytes(file_path: Path, media_type: str) -> bool:
+    """Verify file magic bytes against expected headers."""
+    try:
+        with open(file_path, "rb") as f:
+            header = f.read(32)
+        if media_type == "image":
+            # JPEG: FF D8 FF
+            if header.startswith(b"\xff\xd8\xff"):
+                return True
+            # PNG: 89 50 4E 47
+            if header.startswith(b"\x89PNG\r\n\x1a\n"):
+                return True
+            # WEBP: RIFF .... WEBP
+            if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+                return True
+            return False
+        elif media_type == "video":
+            # MP4 / MOV: check for ftyp box or moov/mdat
+            if b"ftyp" in header[:16] or b"moov" in header[:16] or b"mdat" in header[:16]:
+                return True
+            # Matroska / MKV / WebM: 1A 45 DF A3
+            if header.startswith(b"\x1a\x45\xdf\xa3"):
+                return True
+            # AVI: RIFF .... AVI
+            if header.startswith(b"RIFF") and header[8:12] == b"AVI ":
+                return True
+            return False
+    except Exception:
+        return False
+    return False
+
 # ─── Auto Cleanup Task ────────────────────────────────────────────────────────
 async def auto_cleanup_loop():
-    """Background task to purge old files."""
+    """Background task to purge old files adhering to RETENTION_HOURS."""
     while True:
         try:
-            logger.info("[cleanup] Starting periodic maintenance…")
-            # 1. Clean temp frames (keep 6 hours)
+            logger.info("[cleanup] Starting periodic maintenance (retention=%dh)…", RETENTION_HOURS)
+            retention_sec = RETENTION_HOURS * 3600
+            
+            # 1. Clean temp frames (keep max 6 hours)
             cleanup_temp_dirs(*[str(d) for d in FRAMES_DIR.glob("*") if time.time() - d.stat().st_mtime > 6 * 3600])
             
-            # 2. Clean uploads (keep 24 hours)
-            # Find files/dirs in UPLOADS_DIR older than 24h
+            # 2. Clean uploads (keep RETENTION_HOURS)
             for p in UPLOADS_DIR.iterdir():
-                if time.time() - p.stat().st_mtime > 24 * 3600:
+                if time.time() - p.stat().st_mtime > retention_sec:
                     if p.is_dir():
                         cleanup_temp_dirs(str(p))
                     else:
                         p.unlink(missing_ok=True)
             
-            # 3. Clean outputs (keep 7 days)
+            # 3. Clean outputs (keep RETENTION_HOURS)
             for p in OUTPUTS_DIR.iterdir():
-                if p.is_file() and time.time() - p.stat().st_mtime > 7 * 24 * 3600:
+                if p.is_file() and time.time() - p.stat().st_mtime > retention_sec:
                     p.unlink(missing_ok=True)
                     
             logger.info("[cleanup] Maintenance complete.")
@@ -148,19 +190,15 @@ async def lifespan(app: FastAPI):
         check_models(auto_download=False)
         logger.info("[lifespan] Models validated on startup.")
         
-        # 3. Initialize Shared Swapper (Singleton)
+        # 3. Initialize Shared Swapper (Singleton — warm-up performed once inside FaceSwapper.__init__)
         logger.info("[lifespan] Initializing global FaceSwapper (this may take a moment)…")
         app.state.swapper = FaceSwapper()
-        # Warm up the AI engine while user is browsing
-        app.state.swapper._warm_up()
 
         # 4. Start cleanup task
         app.state.cleanup_task = asyncio.create_task(auto_cleanup_loop())
 
     except Exception as exc:
         logger.error("[lifespan] Initialization failed: %s", exc)
-        # We don't raise here if we want the app to still start (e.g. for inspection), 
-        # but for this app, models are critical.
         raise RuntimeError(str(exc)) from exc
     yield
     # Cleanup
@@ -202,6 +240,27 @@ async def serve_frontend():
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
+async def _stream_upload_to_disk(upload_file: UploadFile, dest_path: Path, max_bytes: int) -> int:
+    """Stream an uploaded file to disk in chunks, enforcing a max size limit."""
+    total_written = 0
+    chunk_size = 64 * 1024  # 64 KB chunks
+    with dest_path.open("wb") as out:
+        while True:
+            chunk = await upload_file.read(chunk_size)
+            if not chunk:
+                break
+            total_written += len(chunk)
+            if total_written > max_bytes:
+                out.close()
+                dest_path.unlink(missing_ok=True)
+                raise HTTPException(413, f"Uploaded file exceeds limit of {max_bytes // (1024*1024)}MB.")
+            out.write(chunk)
+    if total_written == 0:
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(400, "Uploaded file is empty.")
+    return total_written
+
+
 @app.post("/upload", summary="Upload source face image and target video")
 async def upload_files(
     image: UploadFile = File(..., description="Source face image"),
@@ -216,28 +275,23 @@ async def upload_files(
 
     img_ext  = Path(image.filename).suffix.lower()
     img_path = session_dir / f"source_face{img_ext}"
-    # Security: File size limit
-    MAX_IMG_SIZE = 50 * 1024 * 1024  # 50 MB
-    MAX_VID_SIZE = 500 * 1024 * 1024 # 500 MB
+    MAX_IMG_SIZE = 50 * 1024 * 1024   # 50 MB
+    MAX_VID_SIZE = 500 * 1024 * 1024  # 500 MB
 
-    img_data = await image.read()
-    if len(img_data) > MAX_IMG_SIZE:
-        raise HTTPException(413, "Image file too large (limit 50MB).")
-    if not img_data:
-        raise HTTPException(400, "Uploaded image is empty.")
-    img_path.write_bytes(img_data)
+    img_size = await _stream_upload_to_disk(image, img_path, MAX_IMG_SIZE)
+    if not validate_media_magic_bytes(img_path, "image"):
+        img_path.unlink(missing_ok=True)
+        raise HTTPException(400, "Invalid image format header or corrupted image.")
 
     vid_ext  = Path(video.filename).suffix.lower()
     vid_path = session_dir / f"target_video{vid_ext}"
 
-    vid_data = await video.read()
-    if len(vid_data) > MAX_VID_SIZE:
-        raise HTTPException(413, "Video file too large (limit 500MB).")
-    if not vid_data:
-        raise HTTPException(400, "Uploaded video is empty.")
-    vid_path.write_bytes(vid_data)
+    vid_size = await _stream_upload_to_disk(video, vid_path, MAX_VID_SIZE)
+    if not validate_media_magic_bytes(vid_path, "video"):
+        vid_path.unlink(missing_ok=True)
+        raise HTTPException(400, "Invalid video format header or corrupted video.")
 
-    logger.info("Session %s: image %d B, video %d B", session_id, len(img_data), len(vid_data))
+    logger.info("Session %s: image %d B, video %d B", session_id, img_size, vid_size)
 
     try:
         info = get_video_info(str(vid_path))
@@ -428,6 +482,8 @@ async def get_selection_thumbnail(filename: str):
 # ─── Session Resolver ──────────────────────────────────────────────────────────
 
 def _resolve_session(session_id: str) -> tuple[Path, str, str]:
+    if not validate_session_id(session_id):
+        raise HTTPException(400, "Invalid session ID format.")
     session_dir = UPLOADS_DIR / session_id
     if not session_dir.exists():
         raise HTTPException(404, f"Session '{session_id}' not found.")
@@ -459,7 +515,6 @@ async def _run_pipeline(
     Preview mode:  preview_seconds=N  → extracts only first N seconds of frames.
     Full mode:     preview_seconds=None → extracts all frames.
     """
-    import time
     qcfg    = _QUALITY_CONFIG.get(quality, _QUALITY_CONFIG["balanced"])
     qmode   = QualityMode(quality)
     bitrate = qcfg["bitrate"]
@@ -508,11 +563,12 @@ async def _run_pipeline(
                 "orientation": orientation,
             })
             resized_path = vid_path
-            need_resize = (height > 0 and max(in_w, in_h) > height) or (resize_mode == "crop_portrait")
+            target_w, target_h = compute_mode_resolution(in_w, in_h, height)
+            need_resize = (target_h > 0 and target_h < in_h) or (resize_mode == "crop_portrait")
             if need_resize:
-                resized_path = vid_path.replace(Path(vid_path).suffix, f"_{height}p_{resize_mode}.mp4")
-                upd("processing", 14, f"Preparing {orientation} video…")
-                await loop.run_in_executor(None, resize_video, vid_path, resized_path, height, resize_mode)
+                resized_path = vid_path.replace(Path(vid_path).suffix, f"_{target_h}p_{resize_mode}.mp4")
+                upd("processing", 14, f"Preparing {orientation} video ({target_w}x{target_h})…")
+                await loop.run_in_executor(None, resize_video, vid_path, resized_path, target_h, resize_mode)
             else:
                 upd("processing", 14, f"Resolution OK ({in_w}x{in_h}).")
 
@@ -581,7 +637,8 @@ async def _run_pipeline(
                 prog_end,
                 db,
                 job_id,
-                identity_validator
+                identity_validator,
+                bitrate,
             )
             upd("rendering", 80, f"Swap complete ({swapped} swapped).")
 
