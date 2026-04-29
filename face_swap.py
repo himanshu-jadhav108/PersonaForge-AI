@@ -23,6 +23,9 @@ from typing import Optional
 from models.model_manager import get_model_path, MODEL_CONFIG
 from utils.tracker_factory import make_tracker
 from backend.app.models.factory import ModelFactory
+from backend.app.tracking.factory import get_tracker
+from pipelines.blending.factory import get_blender
+from config import config_gpu as gpu_cfg
 from video_utils import get_video_info, get_ffmpeg_writer
 
 logger = logging.getLogger("personaforge.face_swap")
@@ -37,18 +40,9 @@ class QualityMode(str, Enum):
     BALANCED = "balanced"
     HIGH     = "high"
 
-# Per-mode JPEG quality for intermediate frames
-_JPEG_QUALITY = {
-    QualityMode.FAST:     88,
-    QualityMode.BALANCED: 95,
-    QualityMode.HIGH:     99,
-}
-
 # ── Tuning Constants ──────────────────────────────────────────────────────────
 DETECT_EVERY_N_FRAMES = 5      # Full detection every N frames; track in between
 FACE_CROP_PADDING     = 0.35   # Padding around detected face bbox
-WRITE_WORKERS         = 4      # Threads for concurrent JPEG writes
-BATCH_FLUSH_SIZE      = 32     # Flush write queue after this many frames
 
 # ── Custom Exception ──────────────────────────────────────────────────────────
 
@@ -205,6 +199,7 @@ class FaceSwapper:
         db_manager                = None,
         job_id:      str          = None,
         identity_validator        = None,
+        bitrate:     Optional[str] = None,
     ) -> tuple[int, int]:
         """
         Route to GPU or CPU pipeline based on detected hardware.
@@ -227,6 +222,7 @@ class FaceSwapper:
                 db_manager     = db_manager,
                 job_id         = job_id,
                 identity_validator = identity_validator,
+                bitrate        = bitrate,
             )
         else:
             from pipelines.pipeline_cpu import process_video_cpu
@@ -243,6 +239,8 @@ class FaceSwapper:
                 db_manager     = db_manager,
                 job_id         = job_id,
                 identity_validator = identity_validator,
+                bitrate        = bitrate,
+                quality        = quality,
             )
 
     # ── Source Face ────────────────────────────────────────────────────────────
@@ -321,10 +319,11 @@ class FaceSwapper:
         db_manager                = None,
         job_id:      str         = None,
         identity_validator       = None,
+        bitrate:     Optional[str] = None,
     ) -> tuple[int, int]:
         """
         Core processing loop.
-        Now uses in-memory video streaming.
+        Uses in-memory video streaming with safe try/finally cleanup and throttled progress.
         """
         info = get_video_info(video_path)
         total = info.get("total_frames", 0)
@@ -342,129 +341,158 @@ class FaceSwapper:
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video '{video_path}'")
             
+        chosen_bitrate = bitrate or ("2M" if quality == QualityMode.FAST else ("12M" if quality == QualityMode.HIGH else "6M"))
         writer = get_ffmpeg_writer(
             output_path=output_path,
             fps=fps,
             width=orig_w,
             height=orig_h,
-            bitrate="6M",
+            bitrate=chosen_bitrate,
             cpu_mode=False,
+            is_preview=(max_frames is not None),
         )
 
         swapped  = skipped = 0
         tracker  = None
         tracked_bbox = None
-
         t_start = time.perf_counter()
+        last_progress_time = 0.0
+        last_progress_pct = -1
 
-        for i in range(total):
-            ret, frame = cap.read()
-            if not ret:
-                break
+        # Validation frequency: dense in HIGH, balanced in BALANCED, sparse in FAST
+        val_freq = 15 if quality == QualityMode.FAST else (2 if quality == QualityMode.HIGH else 5)
 
-            h, w     = frame.shape[:2]
-            face_found = False
+        # Mode calibration for blending and tracking
+        if quality == QualityMode.FAST:
+            blender = get_blender("alpha")
+            detect_interval = 10
+            tracker_type = "kcf"
+        elif quality == QualityMode.HIGH:
+            blender_type = "seamless_clone_experimental" if getattr(gpu_cfg, "USE_SEAMLESS_CLONE", False) else "feathered"
+            blender = get_blender(blender_type)
+            detect_interval = 2
+            tracker_type = "kcf"
+        else:  # BALANCED
+            blender = get_blender("feathered")
+            detect_interval = 5
+            tracker_type = "kcf"
 
-            # ── Face Detection / Tracking ──────────────────────────────────
-            run_detection = (i % DETECT_EVERY_N_FRAMES == 0) or tracker is None
+        try:
+            for i in range(total):
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            if not run_detection and tracker is not None:
-                ok, bbox = tracker.update(frame)
-                if ok:
-                    tracked_bbox = tuple(int(v) for v in bbox)
-                    face_found   = True
-                else:
-                    tracker       = None
-                    run_detection = True
+                h, w = frame.shape[:2]
+                face_found = False
 
-            if run_detection:
-                all_faces = self._app.get(frame)
-                if all_faces:
-                    # Sort by area descending
-                    all_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
-                    best  = all_faces[0]
-                    x1, y1, x2, y2 = [int(v) for v in best.bbox[:4]]
-                    bw, bh = x2 - x1, y2 - y1
-                    tracked_bbox = (x1, y1, bw, bh)
-                    face_found   = True
-                    tracker      = _make_tracker()
-                    if tracker is not None:
-                        tracker.init(frame, tracked_bbox)
-                else:
-                    tracker      = None
-                    tracked_bbox = None
+                # ── Face Detection / Tracking ──────────────────────────────────
+                run_detection = (i % detect_interval == 0) or tracker is None
 
-            # ── Crop-based Swap ────────────────────────────────────────────
-            if face_found and tracked_bbox and source_face is not None:
-                x, y, bw, bh = tracked_bbox
-                pad_x = int(bw * FACE_CROP_PADDING)
-                pad_y = int(bh * FACE_CROP_PADDING)
-                x1c = max(0, x - pad_x)
-                y1c = max(0, y - pad_y)
-                x2c = min(w, x + bw + pad_x)
-                y2c = min(h, y + bh + pad_y)
-
-                crop = frame[y1c:y2c, x1c:x2c]
-
-                crop_faces = self._app.get(crop)
-                if crop_faces:
-                    # Filter by face_index (-1 = all)
-                    crop_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
-                    targets = (
-                        crop_faces if face_index == -1
-                        else ([crop_faces[face_index]] if face_index < len(crop_faces) else crop_faces)
-                    )
-
-                    result_crop = crop.copy()
-                    did_swap    = False
-                    for tf in targets:
-                        try:
-                            result_crop = self._swap_adapter.swap_face(result_crop, tf, source_face)
-                            did_swap    = True
-                        except Exception as e:
-                            logger.debug("Swap on crop failed: %s", e)
-
-                    if did_swap:
-                        # Quality-driven enhancement on the crop only
-                        result_crop = _enhance_crop(result_crop, quality)
-
-                        # Build mask for seamless clone blending
-                        result = _blend_crop(frame, result_crop, x1c, y1c, x2c, y2c)
-                        swapped += 1
-                        
-                        if identity_validator:
-                            swapped_faces = self._app.get(result_crop)
-                            if swapped_faces:
-                                swapped_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
-                                swapped_face = swapped_faces[0]
-                                timestamp = float(i)
-                                identity_validator.add_record(i, timestamp, source_face.embedding, swapped_face.embedding)
+                if not run_detection and tracker is not None:
+                    ok, bbox = tracker.update(frame)
+                    if ok:
+                        tracked_bbox = tuple(int(v) for v in bbox)
+                        face_found   = True
                     else:
-                        result = frame
+                        tracker       = None
+                        run_detection = True
+
+                if run_detection:
+                    all_faces = self._app.get(frame)
+                    if all_faces:
+                        all_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
+                        best  = all_faces[0]
+                        x1, y1, x2, y2 = [int(v) for v in best.bbox[:4]]
+                        bw, bh = x2 - x1, y2 - y1
+                        tracked_bbox = (x1, y1, bw, bh)
+                        face_found   = True
+                        tracker      = get_tracker(tracker_type)
+                        if tracker is not None:
+                            tracker.init(frame, tracked_bbox)
+                    else:
+                        tracker      = None
+                        tracked_bbox = None
+
+                # ── Crop-based Swap ────────────────────────────────────────────
+                if face_found and tracked_bbox and source_face is not None:
+                    x, y, bw, bh = tracked_bbox
+                    pad_x = int(bw * FACE_CROP_PADDING)
+                    pad_y = int(bh * FACE_CROP_PADDING)
+                    x1c = max(0, x - pad_x)
+                    y1c = max(0, y - pad_y)
+                    x2c = min(w, x + bw + pad_x)
+                    y2c = min(h, y + bh + pad_y)
+
+                    crop = frame[y1c:y2c, x1c:x2c]
+                    crop_faces = self._app.get(crop)
+                    if crop_faces:
+                        crop_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
+                        targets = (
+                            crop_faces if face_index == -1
+                            else ([crop_faces[face_index]] if face_index < len(crop_faces) else crop_faces)
+                        )
+
+                        result_crop = crop.copy()
+                        did_swap    = False
+                        for tf in targets:
+                            try:
+                                result_crop = self._swap_adapter.swap_face(result_crop, tf, source_face)
+                                did_swap    = True
+                            except Exception as e:
+                                logger.debug("Swap on crop failed: %s", e)
+
+                        if did_swap:
+                            result_crop = _enhance_crop(result_crop, quality)
+                            result = _blend_crop(frame, result_crop, x1c, y1c, x2c, y2c, quality=quality, blender=blender)
+                            swapped += 1
+                            
+                            # Periodic identity validation avoids redundant FaceAnalysis passes
+                            if identity_validator and (i % val_freq == 0 or i == total - 1):
+                                swapped_faces = self._app.get(result_crop)
+                                if swapped_faces:
+                                    swapped_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
+                                    swapped_face = swapped_faces[0]
+                                    timestamp = float(i) / max(1.0, fps)
+                                    identity_validator.add_record(i, timestamp, source_face.embedding, swapped_face.embedding)
+                        else:
+                            result = frame
+                            skipped += 1
+                    else:
+                        result  = frame
                         skipped += 1
                 else:
                     result  = frame
                     skipped += 1
-            else:
-                result  = frame
-                skipped += 1
 
-            # ── Direct Pipe Write ──────────────────────────────────────────
-            writer.stdin.write(result.tobytes())
+                # ── Direct Pipe Write ──────────────────────────────────────────
+                writer.stdin.write(result.tobytes())
 
-            # ── Progress ───────────────────────────────────────────────────
-            if db_manager is not None and job_id is not None:
-                span = progress_end - progress_start
-                pct  = progress_start + int((i + 1) / total * span)
-                db_manager.update_job(job_id, {
-                    "progress": pct,
-                    "message": f"Frame {i+1}/{total} — swapped={swapped}, skipped={skipped}"
-                })
+                # ── Throttled Progress ─────────────────────────────────────────
+                if db_manager is not None and job_id is not None:
+                    now = time.monotonic()
+                    span = progress_end - progress_start
+                    pct  = progress_start + int((i + 1) / total * span)
+                    if (now - last_progress_time >= 0.5) or (pct != last_progress_pct) or (i == total - 1):
+                        last_progress_time = now
+                        last_progress_pct = pct
+                        db_manager.update_job(job_id, {
+                            "progress": pct,
+                            "message": f"Frame {i+1}/{total} — swapped={swapped}, skipped={skipped}"
+                        })
 
-        # Clean up
-        cap.release()
-        writer.stdin.close()
-        writer.wait()
+        finally:
+            cap.release()
+            if writer:
+                if writer.stdin:
+                    try:
+                        writer.stdin.close()
+                    except Exception:
+                        pass
+                try:
+                    writer.wait(timeout=10)
+                except Exception:
+                    writer.kill()
 
         elapsed = time.perf_counter() - t_start
         fps_out = total / elapsed if elapsed > 0 else 0
@@ -500,35 +528,19 @@ def _enhance_crop(img: np.ndarray, quality: QualityMode) -> np.ndarray:
 def _blend_crop(
     frame: np.ndarray,
     result_crop: np.ndarray,
-    x1: int, y1: int, x2: int, y2: int,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    quality: Optional[QualityMode] = None,
+    blender = None,
 ) -> np.ndarray:
     """
-    Blend the swapped crop back into the frame using seamlessClone
-    for a smooth, realistic boundary. Falls back to direct paste on error.
+    Blend the swapped crop back into the frame using the configured blender.
+    Supports AlphaBlend, FeatheredBlend, and SeamlessCloneExperimental.
     """
-    result = frame.copy()
-    crop_h = y2 - y1
-    crop_w = x2 - x1
+    if blender is not None:
+        return blender.blend(frame, result_crop, x1, y1, x2, y2)
 
-    if result_crop.shape[0] != crop_h or result_crop.shape[1] != crop_w:
-        # Shape mismatch — resize to fit
-        result_crop = cv2.resize(result_crop, (crop_w, crop_h))
-
-    try:
-        # Elliptical mask for seamless clone
-        mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
-        cy, cx = crop_h // 2, crop_w // 2
-        axes   = (max(1, crop_w // 2 - 4), max(1, crop_h // 2 - 4))
-        cv2.ellipse(mask, (cx, cy), axes, 0, 0, 360, 255, -1)
-
-        center = (x1 + cx, y1 + cy)
-        result = cv2.seamlessClone(result_crop, result, mask, center, cv2.NORMAL_CLONE)
-    except Exception as e:
-        logger.debug("seamlessClone failed (%s) — using direct paste.", e)
-        result[y1:y2, x1:x2] = result_crop
-
-    return result
-
-
-def _write_frame(path: str, frame: np.ndarray, quality: int = 95) -> None:
-    cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    b_type = "alpha" if quality == QualityMode.FAST else "feathered"
+    return get_blender(b_type).blend(frame, result_crop, x1, y1, x2, y2)

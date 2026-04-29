@@ -166,3 +166,31 @@ The results and interactive Plotly performance graphs will be saved under the `b
 ### 3. Error: `FFmpeg is not recognized`
 - **Cause**: FFmpeg execution path is missing from your system environmental variables.
 - **Solution**: Rerun environment path configuration or verify that typing `ffmpeg` in a clean command prompt successfully returns the tool's usage details.
+
+---
+
+## 8. Processing Modes, Modular Blending & Tracking Architecture
+
+PersonaForge AI provides genuine differentiation between processing modes through modular blending, abstract face tracking, and dynamic resolution scaling:
+
+### Processing Mode Differentiation Matrix
+
+| Parameter | Fast Mode | Balanced Mode | High Mode |
+|---|---|---|---|
+| **Resolution Target** | Dynamic max 480p | Dynamic max 720p | Dynamic max 1080p |
+| **Upscaling Rule** | Never upscales lower res | Never upscales lower res | Preserves native resolution |
+| **Face Blending** | `AlphaBlend` (direct paste) | `FeatheredBlend` (Gaussian soft) | `FeatheredBlend` (or experimental clone) |
+| **Detection Cadence** | Every 10 frames | Every 5 frames | Every 2 frames |
+| **Validation Cadence** | Every 15 frames | Every 5 frames | Every 2 frames |
+| **Target Bitrate** | 2 Mbps | 6 Mbps | 12 Mbps (or 3 Mbps CPU) |
+
+### Modular Blending Strategies (`pipelines/blending/`)
+* **`AlphaBlend`**: Fast, boundary-clipped direct paste. Ideal for CPU processing and high-throughput Fast mode with 0ms boundary calculation overhead.
+* **`FeatheredBlend`**: Inscribed soft elliptical Gaussian blending. Smoothly transitions between the swapped face patch and the background video without hard rectangular seams and without Poisson discoloration artifacts.
+* **`SeamlessCloneExperimental`**: Retained under the `EXPERIMENTAL` flag (Safeguard 5) for comparative benchmarking. Wraps OpenCV's Poisson equation solver with automatic fallbacks to `FeatheredBlend` on boundary error.
+
+### Tracking Abstraction (`backend/app/tracking/`)
+* **`BaseFaceTracker`**: Abstract contract (`init`, `update`, `reset`) decoupling video processing loops from specific tracking algorithms.
+* **`KCFTracker`**: OpenCV-backed correlation filter tracking with bounding-box volume and aspect-ratio validation.
+* **`DetectionOnlyTracker`**: Bypasses correlation filtering and signals tracking failure on every frame to mandate per-frame face detection.
+

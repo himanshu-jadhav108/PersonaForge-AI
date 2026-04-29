@@ -27,6 +27,7 @@ def process_video_gpu(
     db_manager               = None,
     job_id:      str         = None,
     identity_validator       = None,
+    bitrate:     Optional[str] = None,
 ) -> tuple[int, int]:
     """
     Delegate to the original GPU processing loop unchanged.
@@ -35,7 +36,7 @@ def process_video_gpu(
     return swapper.process_video(
         source_face     = source_face,
         video_path      = video_path,
-        output_path      = output_path,
+        output_path     = output_path,
         quality         = quality,
         face_index      = face_index,
         max_frames      = max_frames,
@@ -44,4 +45,5 @@ def process_video_gpu(
         db_manager      = db_manager,
         job_id          = job_id,
         identity_validator = identity_validator,
+        bitrate         = bitrate,
     )
