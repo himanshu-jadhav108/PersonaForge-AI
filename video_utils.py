@@ -18,6 +18,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import cv2
+
 logger = logging.getLogger("personaforge.video_utils")
 
 
@@ -147,14 +149,34 @@ def get_video_info(video_path: str) -> dict:
         "-show_streams", "-show_format",
         video_path,
     ]
+    data = None
     try:
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
         if result.returncode != 0:
             raise RuntimeError(f"ffprobe failed: {result.stderr}")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("ffprobe timed out after 30s")
+        data = json.loads(result.stdout)
+    except Exception as exc:
+        logger.warning("ffprobe failed (%s); falling back to cv2.VideoCapture", exc)
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return {}
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        dur = float(total_frames / fps) if fps > 0 else 0.0
+        cap.release()
+        return {
+            "width": w,
+            "height": h,
+            "codec": "unknown",
+            "orientation": detect_orientation(w, h),
+            "aspect_ratio": round(w / float(h), 4) if h > 0 else 0.0,
+            "fps": fps,
+            "duration": dur,
+            "total_frames": total_frames,
+        }
 
-    data = json.loads(result.stdout)
     info: dict = {}
 
     for stream in data.get("streams", []):

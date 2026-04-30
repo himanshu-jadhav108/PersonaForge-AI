@@ -11,6 +11,7 @@ Endpoints:
   GET  /jobs          → list recent jobs (history)
 """
 
+import json
 import os
 import re
 import time
@@ -22,8 +23,10 @@ from pathlib import Path
 from typing import Optional
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from functools import partial
 
 import cv2
+import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,7 +43,7 @@ from utils.database import JobDB
 from backend.app.identity.validator import IdentityValidator
 from backend.app.quality.assessor import FaceQualityAssessor
 from backend.app.quality.dashboard import generate_dashboard as quality_generate_dashboard
-from backend.app.selection.models import SelectionMode
+from backend.app.selection.models import SelectionMode, MediaAnalysisResponse
 from backend.app.selection.engine import SmartFaceSelector
 from backend.app.selection.dashboard import generate_dashboard as selection_generate_dashboard
 from backend.app.analytics.router import router as analytics_router
@@ -313,6 +316,7 @@ async def preview_faceswap(
     session_id: str = Query(...),
     quality:    str = Query("balanced", enum=["fast", "balanced", "high"]),
     face_index: int = Query(-1, description="-1=all faces, 0..n=specific face"),
+    target_face_id: Optional[str] = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
     duration:   float = Query(4.0, description="Preview duration in seconds"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
 ):
@@ -324,10 +328,11 @@ async def preview_faceswap(
         job_id=job_id, session_id=session_id,
         img_path=img_path, vid_path=vid_path,
         quality=quality, face_index=face_index,
+        target_face_id=target_face_id,
         preview_seconds=duration,
         resize_mode=resize_mode,
     )
-    logger.info("Preview job %s queued for session %s", job_id, session_id)
+    logger.info("Preview job %s queued for session %s (target=%s)", job_id, session_id, target_face_id or face_index)
     return JSONResponse({"job_id": job_id, "message": "Preview started. Poll /status/{job_id}."})
 
 
@@ -337,6 +342,7 @@ async def process_faceswap(
     session_id: str = Query(...),
     quality:    str = Query("balanced", enum=["fast", "balanced", "high"]),
     face_index: int = Query(-1),
+    target_face_id: Optional[str] = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
 ):
     session_dir, img_path, vid_path = _resolve_session(session_id)
@@ -347,10 +353,11 @@ async def process_faceswap(
         job_id=job_id, session_id=session_id,
         img_path=img_path, vid_path=vid_path,
         quality=quality, face_index=face_index,
+        target_face_id=target_face_id,
         preview_seconds=None,
         resize_mode=resize_mode,
     )
-    logger.info("Full job %s queued for session %s", job_id, session_id)
+    logger.info("Full job %s queued for session %s (target=%s)", job_id, session_id, target_face_id or face_index)
     return JSONResponse({"job_id": job_id, "message": "Processing started. Poll /status/{job_id}."})
 
 
@@ -424,43 +431,86 @@ async def get_quality_dashboard(filename: str):
         raise HTTPException(404, "Dashboard not found.")
     return FileResponse(str(dashboard_path), media_type="text/html", filename=safe_name)
 
-@app.post("/selection/analyze", summary="Analyze video for smart face selection")
-async def analyze_face_selection(
-    video: UploadFile = File(..., description="Video to analyze"),
-    mode: SelectionMode = Query(SelectionMode.LARGEST, description="Ranking mode")
+@app.post("/media/analyze", summary="Analyze video stream metadata, detect identities, and diagnose quality")
+async def analyze_media_endpoint(
+    video: Optional[UploadFile] = File(None, description="Video to analyze (optional if session_id is provided)"),
+    session_id: Optional[str] = Query(None, description="Session ID of already uploaded video"),
+    mode: SelectionMode = Query(SelectionMode.LARGEST, description="Ranking mode"),
+    sample_rate_hz: float = Query(1.0, description="Sampling rate in Hz (default: 1 frame/sec)"),
 ):
-    _check_ext(video.filename, ALLOWED_VIDEO_EXTS, "video")
-    
-    vid_data = await video.read()
-    if not vid_data:
-        raise HTTPException(400, "Uploaded video is empty.")
-        
-    session_id = uuid.uuid4().hex
-    vid_path = UPLOADS_DIR / f"temp_selection_{session_id}{Path(video.filename).suffix.lower()}"
-    vid_path.write_bytes(vid_data)
-    
+    if not video and not session_id:
+        raise HTTPException(400, "Either 'video' file or 'session_id' must be provided.")
+
+    temp_vid_path: Optional[Path] = None
+    target_vid_path: str = ""
+    resolved_session_id = session_id or uuid.uuid4().hex
+
+    if video is not None and video.filename:
+        _check_ext(video.filename, ALLOWED_VIDEO_EXTS, "video")
+        session_dir = UPLOADS_DIR / resolved_session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        temp_vid_path = session_dir / f"temp_analyze_{uuid.uuid4().hex[:8]}{Path(video.filename).suffix.lower()}"
+
+        MAX_VID_SIZE = 500 * 1024 * 1024
+        await _stream_upload_to_disk(video, temp_vid_path, MAX_VID_SIZE)
+        if not validate_media_magic_bytes(temp_vid_path, "video"):
+            temp_vid_path.unlink(missing_ok=True)
+            raise HTTPException(400, "Invalid video format header or corrupted video.")
+        target_vid_path = str(temp_vid_path)
+    elif session_id:
+        _, _, target_vid_path = _resolve_session(session_id)
+    else:
+        raise HTTPException(400, "No video file provided.")
+
     try:
         app_state_swapper_app = app.state.swapper._app if hasattr(app.state, 'swapper') else None
-        if not app_state_swapper_app:
-            raise HTTPException(503, "AI Engine not warmed up yet.")
-            
         thumbnails_dir = OUTPUTS_DIR / "selection_thumbnails"
         selector = SmartFaceSelector(face_analysis_app=app_state_swapper_app, output_dir=thumbnails_dir)
-        
-        report = selector.analyze_video(session_id, str(vid_path), mode)
-        
+
+        report = selector.analyze_media(
+            job_id=resolved_session_id,
+            video_path=target_vid_path,
+            mode=mode,
+            sample_rate_hz=sample_rate_hz,
+            session_id=resolved_session_id,
+        )
+
         # Generate dashboard
         reports_dir = OUTPUTS_DIR / "reports"
-        dashboard_path = selection_generate_dashboard(report, reports_dir, session_id)
-        
+        dashboard_path = selection_generate_dashboard(report, reports_dir, resolved_session_id)
         report.dashboard_url = f"/selection/dashboard/{dashboard_path.name}"
-        
+
+        # Persist identity mappings for downstream targeted face swapping
+        s_dir = UPLOADS_DIR / resolved_session_id
+        s_dir.mkdir(parents=True, exist_ok=True)
+        ident_map = {
+            p.face_id: {
+                "person_label": p.person_label,
+                "embedding": p.representative_embedding,
+                "thumbnail_url": p.thumbnail_url,
+            }
+            for p in report.detected_identities
+        }
+        (s_dir / "identities.json").write_text(json.dumps(ident_map), encoding="utf-8")
+
         return JSONResponse(report.model_dump())
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to analyze video selection: {e}")
-        raise HTTPException(500, f"Error analyzing video: {str(e)}")
+        logger.error("Failed to analyze media: %s", e)
+        raise HTTPException(500, f"Error analyzing media: {str(e)}")
     finally:
-        vid_path.unlink(missing_ok=True)
+        if temp_vid_path and not session_id:
+            temp_vid_path.unlink(missing_ok=True)
+
+
+@app.post("/selection/analyze", summary="Analyze video for smart face selection (backward compatible)")
+async def analyze_face_selection(
+    video: UploadFile = File(..., description="Video to analyze"),
+    mode: SelectionMode = Query(SelectionMode.LARGEST, description="Ranking mode"),
+):
+    return await analyze_media_endpoint(video=video, session_id=None, mode=mode, sample_rate_hz=1.0)
+
 
 @app.get("/selection/dashboard/{filename}", summary="Get face selection dashboard HTML")
 async def get_selection_dashboard(filename: str):
@@ -470,13 +520,19 @@ async def get_selection_dashboard(filename: str):
         raise HTTPException(404, "Dashboard not found.")
     return FileResponse(str(dashboard_path), media_type="text/html", filename=safe_name)
 
+
 @app.get("/selection/thumbnails/{filename}", summary="Get face selection thumbnail")
 async def get_selection_thumbnail(filename: str):
     safe_name = Path(filename).name
     thumbnail_path = OUTPUTS_DIR / "selection_thumbnails" / safe_name
     if not thumbnail_path.exists():
-        raise HTTPException(404, "Thumbnail not found.")
-    return FileResponse(str(thumbnail_path), media_type="image/jpeg", filename=safe_name)
+        if not safe_name.endswith(".jpg"):
+            alt_path = OUTPUTS_DIR / "selection_thumbnails" / f"{safe_name}.jpg"
+            if alt_path.exists():
+                thumbnail_path = alt_path
+        if not thumbnail_path.exists():
+            raise HTTPException(404, "Thumbnail not found.")
+    return FileResponse(str(thumbnail_path), media_type="image/jpeg", filename=thumbnail_path.name)
 
 
 # ─── Session Resolver ──────────────────────────────────────────────────────────
@@ -506,6 +562,7 @@ async def _run_pipeline(
     vid_path:        str,
     quality:         str  = "balanced",
     face_index:      int  = -1,
+    target_face_id:  Optional[str] = None,
     preview_seconds: Optional[float] = None,
     resize_mode:     str = "maintain",
 ):
@@ -624,21 +681,39 @@ async def _run_pipeline(
 
             identity_validator = IdentityValidator(job_id=job_id)
 
+            # Resolve target identity embedding if targeted
+            target_embedding = None
+            if target_face_id:
+                s_dir = UPLOADS_DIR / session_id
+                ident_file = s_dir / "identities.json"
+                if ident_file.exists():
+                    try:
+                        idents = json.loads(ident_file.read_text(encoding="utf-8"))
+                        if target_face_id in idents and idents[target_face_id].get("embedding"):
+                            target_embedding = np.array(idents[target_face_id]["embedding"], dtype=np.float32)
+                            lbl = idents[target_face_id].get("person_label", target_face_id)
+                            upd("processing", 35, f"Targeting {lbl} for face swap…")
+                    except Exception as exc:
+                        logger.warning("[%s] Could not load target embedding: %s", job_id[:8], exc)
+
             swapped, skipped = await loop.run_in_executor(
                 None,
-                swapper.process_video_optimized,
-                source_face,
-                resized_path,
-                out_path,
-                qmode,
-                face_index,
-                total_frames if is_preview else None,
-                prog_start,
-                prog_end,
-                db,
-                job_id,
-                identity_validator,
-                bitrate,
+                partial(
+                    swapper.process_video_optimized,
+                    source_face=source_face,
+                    video_path=resized_path,
+                    output_path=out_path,
+                    quality=qmode,
+                    face_index=face_index,
+                    max_frames=total_frames if is_preview else None,
+                    progress_start=prog_start,
+                    progress_end=prog_end,
+                    db_manager=db,
+                    job_id=job_id,
+                    identity_validator=identity_validator,
+                    bitrate=bitrate,
+                    target_embedding=target_embedding,
+                ),
             )
             upd("rendering", 80, f"Swap complete ({swapped} swapped).")
 

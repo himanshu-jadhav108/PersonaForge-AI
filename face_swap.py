@@ -200,6 +200,7 @@ class FaceSwapper:
         job_id:      str          = None,
         identity_validator        = None,
         bitrate:     Optional[str] = None,
+        target_embedding: Optional[np.ndarray] = None,
     ) -> tuple[int, int]:
         """
         Route to GPU or CPU pipeline based on detected hardware.
@@ -223,6 +224,7 @@ class FaceSwapper:
                 job_id         = job_id,
                 identity_validator = identity_validator,
                 bitrate        = bitrate,
+                target_embedding = target_embedding,
             )
         else:
             from pipelines.pipeline_cpu import process_video_cpu
@@ -241,6 +243,7 @@ class FaceSwapper:
                 identity_validator = identity_validator,
                 bitrate        = bitrate,
                 quality        = quality,
+                target_embedding = target_embedding,
             )
 
     # ── Source Face ────────────────────────────────────────────────────────────
@@ -320,6 +323,7 @@ class FaceSwapper:
         job_id:      str         = None,
         identity_validator       = None,
         bitrate:     Optional[str] = None,
+        target_embedding: Optional[np.ndarray] = None,
     ) -> tuple[int, int]:
         """
         Core processing loop.
@@ -428,10 +432,26 @@ class FaceSwapper:
                     crop_faces = self._app.get(crop)
                     if crop_faces:
                         crop_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
-                        targets = (
-                            crop_faces if face_index == -1
-                            else ([crop_faces[face_index]] if face_index < len(crop_faces) else crop_faces)
-                        )
+                        if target_embedding is not None:
+                            best_match = None
+                            best_sim = -1.0
+                            target_norm = float(np.linalg.norm(target_embedding))
+                            if target_norm > 0:
+                                for cf in crop_faces:
+                                    cf_emb = getattr(cf, 'embedding', None)
+                                    if cf_emb is not None:
+                                        cf_emb_arr = np.array(cf_emb, dtype=np.float32).flatten()
+                                        cf_norm = float(np.linalg.norm(cf_emb_arr))
+                                        if cf_norm > 0:
+                                            sim = float(np.dot(cf_emb_arr, target_embedding) / (cf_norm * target_norm))
+                                            if sim > best_sim:
+                                                best_sim = sim
+                                                best_match = cf
+                            targets = [best_match] if (best_match is not None and best_sim >= 0.40) else []
+                        elif face_index != -1:
+                            targets = [crop_faces[face_index]] if face_index < len(crop_faces) else crop_faces
+                        else:
+                            targets = crop_faces
 
                         result_crop = crop.copy()
                         did_swap    = False

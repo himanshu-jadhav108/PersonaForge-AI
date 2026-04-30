@@ -194,3 +194,27 @@ PersonaForge AI provides genuine differentiation between processing modes throug
 * **`KCFTracker`**: OpenCV-backed correlation filter tracking with bounding-box volume and aspect-ratio validation.
 * **`DetectionOnlyTracker`**: Bypasses correlation filtering and signals tracking failure on every frame to mandate per-frame face detection.
 
+---
+
+## 9. Smart Input Analysis & Face Identity Selection
+
+PersonaForge AI features a comprehensive pre-processing analyzer that evaluates video streams before processing, groups recurring faces into coherent identity profiles, and allows targeted face replacement:
+
+### Video Stream Probing & Diagnostics
+* **Stream Metadata**: Extracts native pixel dimensions, framerate, duration, orientation (`landscape`, `portrait`, `square`), aspect ratio, and codec.
+* **Heuristic Diagnostics**:
+  - **Resolution Check**: Warns if input resolution is below 480p.
+  - **Illumination Telemetry**: Flags scenes with low lighting (mean luminance < 40/255) or extreme overexposure (> 225/255).
+  - **Motion Blur Analysis**: Evaluates frame-level Laplacian gradient variance, warning if fast camera pan or rapid head motion causes blur.
+  - **Face Stability Check**: Reports if detected faces appear only intermittently (< 20% of video duration).
+
+### ArcFace Identity Clustering
+* **Clustering Algorithm**: Extracts 512D ArcFace facial embeddings across sampled keyframes and performs cosine distance clustering ($d_{\text{cosine}} \ge 0.45$) against dynamic cluster centroids.
+* **Prevalence-Ordered Person Labels**: Clusters are sorted by prevalence (detection frequency and visibility percentage), mapping primary subjects to **`Detected Person 1`**, secondary subjects to **`Detected Person 2`**, etc.
+* **Optimal Frontal Thumbnail Selection**: Computes a geometric frontalness metric from 5-point landmarks (nose symmetry, eye roll alignment, mouth centering, and bounding box resolution) to select the sharpest, most frontal crop as the identity's representative thumbnail.
+
+### REST Endpoints
+* **`POST /media/analyze`**: Performs video probing, face detection, clustering, and diagnostic analysis. Accepts an uploaded video or an existing `session_id`.
+* **`GET /selection/thumbnails/{filename}`**: Serves representative JPEG thumbnails for detected persons.
+* **Targeted Face Swapping**: Pass `target_face_id="person_1"` to `POST /process` or `POST /preview` to swap specifically the selected person across the entire video.
+
