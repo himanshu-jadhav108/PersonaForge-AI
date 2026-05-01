@@ -218,3 +218,25 @@ PersonaForge AI features a comprehensive pre-processing analyzer that evaluates 
 * **`GET /selection/thumbnails/{filename}`**: Serves representative JPEG thumbnails for detected persons.
 * **Targeted Face Swapping**: Pass `target_face_id="person_1"` to `POST /process` or `POST /preview` to swap specifically the selected person across the entire video.
 
+---
+
+## 10. Identity Intelligence & Consistency Engine (`backend/app/identity/`)
+
+PersonaForge AI integrates a dedicated facial identity consistency monitoring engine to ensure swapped faces preserve source facial geometry without sudden degradation across frames:
+
+### Modular Architecture
+* **`FaceEmbeddingExtractor`** (`extractor.py`): Extracts and L2-normalizes 512D ArcFace embeddings and calculates high-precision cosine distance.
+* **`IdentityDriftDetector`** (`drift_detector.py`): Classifies frame similarity into calibrated empirical drift zones:
+  - **`STABLE`** ($\ge 0.80$): High-fidelity identity preservation.
+  - **`WARNING`** ($0.68 - 0.80$): Subtle landmark divergence or partial occlusion.
+  - **`CRITICAL`** ($< 0.68$): Severe identity drift, extreme profile angle, or landmark failure.
+  - **`Sudden Drop`** ($\Delta \ge 0.20$): Abrupt divergence relative to the trailing 5-frame moving average.
+* **`IdentityScorer`** (`scoring.py`): Calculates trailing rolling averages, statistical variance, and the calibrated composite score ($0-100$) defined in `docs/metrics.md`, applying deductions for sudden drops and critical drift occurrences.
+* **`IdentityTimeline`** (`timeline.py`): Tracks per-frame temporal data points and aggregates contiguous warning/critical frames into continuous intervals for scrubbable UI navigation.
+* **`IdentityReportGenerator`** (`report_generator.py`): Exports structured JSON diagnostics and renders interactive Plotly HTML dashboards featuring shaded drift zones, rolling average traces, and sudden drop diamond markers.
+* **`IdentityValidator`** (`validator.py`): Unified orchestrator maintaining complete backward compatibility with pipeline loops while delegating to the modular sub-components.
+
+### REST Endpoints
+* **`GET /identity/report/{job_id}`**: Retrieves structured JSON diagnostics containing full per-frame records, timeline points, and summary metrics.
+* **`GET /identity/chart/{job_id}`**: Serves interactive Plotly HTML dashboard visualizing similarity trends, shaded drift bands, and sudden drops.
+

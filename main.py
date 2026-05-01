@@ -390,6 +390,13 @@ async def get_identity_report(job_id: str):
         raise HTTPException(404, f"Identity report for job '{job_id}' not found. It might still be processing or failed.")
     return FileResponse(str(report_path), media_type="application/json", filename=report_path.name)
 
+@app.get("/identity/chart/{job_id}", summary="Get interactive identity consistency chart HTML")
+async def get_identity_chart(job_id: str):
+    chart_path = OUTPUTS_DIR / "reports" / f"identity_chart_{job_id}.html"
+    if not chart_path.exists():
+        raise HTTPException(404, f"Identity chart for job '{job_id}' not found. It might still be processing or failed.")
+    return FileResponse(str(chart_path), media_type="text/html", filename=chart_path.name)
+
 @app.post("/quality/assess", summary="Assess face image quality")
 async def assess_face_quality(
     image: UploadFile = File(..., description="Face image to assess"),
