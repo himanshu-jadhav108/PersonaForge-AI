@@ -240,3 +240,21 @@ PersonaForge AI integrates a dedicated facial identity consistency monitoring en
 * **`GET /identity/report/{job_id}`**: Retrieves structured JSON diagnostics containing full per-frame records, timeline points, and summary metrics.
 * **`GET /identity/chart/{job_id}`**: Serves interactive Plotly HTML dashboard visualizing similarity trends, shaded drift bands, and sudden drops.
 
+---
+
+## 11. Quality Intelligence Engine (`backend/app/quality/`)
+
+PersonaForge AI provides a comprehensive spatial and temporal quality evaluation engine:
+
+### Modular Architecture
+* **`SobelSharpnessEvaluator`** (`sharpness.py`): Measures high-frequency gradient magnitude using horizontal and vertical Sobel kernel convolutions.
+* **`LaplacianBlurDetector`** (`blur_detection.py`): Computes spatial focus via Variance of Laplacian ($\sigma_L^2$) and provides calibrated logarithmic sharpness scaling according to `docs/metrics.md`.
+* **`LandmarkStabilityEvaluator`** (`stability.py`): Computes inter-frame facial landmark jitter normalized by Inter-Ocular Distance (IOD), detecting high-frequency tracking snaps ($> 0.18$ IOD) and rating overall temporal stability.
+* **`FaceConfidenceEvaluator`** (`confidence.py`): Evaluates lighting telemetry (brightness centered at 128, contrast standard deviation), face area ratio in frame, detection confidence, and head pose alignment strictly adhering to Safeguard 7 standards (excluding speculative uncalibrated pose penalties).
+* **`FaceQualityAssessor`** (`assessor.py`): Coordinates modular evaluators for both single-image assessment (`assess_image`) and multi-frame video sequence evaluation (`assess_video_sequence`), generating actionable recommendations.
+* **`generate_dashboard`** (`dashboard.py`): Renders interactive Plotly radar charts showcasing multidimensional quality metrics and actionable advice.
+
+### REST Endpoints
+* **`POST /quality/assess`**: Evaluates uploaded face images, returning complete diagnostic metric breakdowns and interactive dashboard URLs.
+* **`GET /quality/dashboard/{filename}`**: Serves the generated interactive HTML radar chart dashboard.
+
