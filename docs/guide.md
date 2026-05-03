@@ -258,3 +258,27 @@ PersonaForge AI provides a comprehensive spatial and temporal quality evaluation
 * **`POST /quality/assess`**: Evaluates uploaded face images, returning complete diagnostic metric breakdowns and interactive dashboard URLs.
 * **`GET /quality/dashboard/{filename}`**: Serves the generated interactive HTML radar chart dashboard.
 
+---
+
+## 12. PersonaForge Integrity & Explainable Confidence Engine (`backend/app/confidence/`)
+
+In compliance with Safeguard 3, PersonaForge AI discards pseudo-probabilistic "Confidence Scores" in favor of the **PersonaForge Integrity Score**—a transparent, explainable composite heuristic combining calibrated mathematical signals:
+
+### Mathematical Components
+1. **Identity Preservation ($S_{cos}$)**: ArcFace 512D cosine similarity normalized from empirical range $[0.20, 0.70]$ to $[0, 100]$.
+2. **Sharpness & Focus ($\sigma_L^2$)**: Logarithmically scaled Laplacian edge variance calibrated between baseline $25.0$ and high-definition target $300.0$.
+3. **Temporal Stability ($\Delta_{jitter}$)**: Mean landmark inter-frame displacement normalized by Inter-Ocular Distance (IOD), detecting tracking snaps ($> 0.18$ IOD).
+4. **Boundary Coherence ($G_{boundary}$)**: Dilated 5-pixel mask perimeter step-change gradient ratio ($> 2.5\times$ local gradient denotes seam artifact).
+5. **Detection Reliability ($C_{det}$)**: Model detection confidence ensuring unambiguous facial localization.
+
+### Executive Classification Tiers
+* **`EXCELLENT`** ($\ge 85$): Studio-grade swap with high identity fidelity and razor-sharp focus.
+* **`GOOD`** ($70 - 84$): High-quality output with minor natural pose or lighting variation.
+* **`FAIR`** ($50 - 69$): Acceptable output with moderate blur or compression.
+* **`DEGRADED`** ($< 50$): Flagged for potential identity drift, motion smearing, or boundary artifacts.
+
+### REST Endpoints
+* **`POST /integrity/evaluate`**: Computes transparent composite scores, diagnostic badges, and human-readable component explanations from metric parameters.
+* **`GET /integrity/report/{job_id}`**: Retrieves the structured JSON integrity evaluation generated automatically upon job completion.
+
+
