@@ -281,4 +281,18 @@ In compliance with Safeguard 3, PersonaForge AI discards pseudo-probabilistic "C
 * **`POST /integrity/evaluate`**: Computes transparent composite scores, diagnostic badges, and human-readable component explanations from metric parameters.
 * **`GET /integrity/report/{job_id}`**: Retrieves the structured JSON integrity evaluation generated automatically upon job completion.
 
+---
+
+## 13. Face Restoration & Identity Guard (`backend/app/models/restoration/`)
+
+PersonaForge AI integrates crop-only facial restoration adapters adhering to strict licensing, transparency, and identity-preservation standards (see [Technical Decision Record](file:///d:/Projects/PersonaForge/docs/restoration-decision.md)):
+
+### Modular Architecture
+* **`GFPGANRestorer`** (`gfpgan_adapter.py`): Primary open-source restorer licensed under **Apache 2.0** (TencentARC). Restores skin micro-textures and eye definition on $512\times512$ crops without full-frame memory overhead.
+* **`CodeFormerRestorer`** (`codeformer_adapter.py`): Optional transformer-based restorer with explicit non-commercial research license disclosure.
+* **`ClassicEnhancer`** (`classic_enhancer.py`): Native OpenCV fallback utilizing bilateral edge-preserving filtering and unsharp masking. Transparently reported as `AI Restoration: Unavailable` and `Classic Enhancement: Enabled (Bilateral / Unsharp)` per Safeguard 2.
+* **`RestorationIdentityGuard`** (`identity_guard.py`): Measures ArcFace cosine similarity between source face and restored crop vs pre-restored crop. If restoration reduces similarity by $\Delta \ge 0.08$, flags an identity drift warning and automatically throttles the restoration blend weight to preserve authentic facial identity.
+* **`RestorationFactory`** (`factory.py`): Dispatches requested restoration adapters and generates transparent availability status reports.
+
+
 

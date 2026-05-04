@@ -6,7 +6,6 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"
 
@@ -18,7 +17,24 @@ MODEL_CONFIG = {
             "https://huggingface.co/deepinsight/inswapper/resolve/main/inswapper_128.onnx",
             "https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx",
         ],
-    }
+        "required": True,
+    },
+    "gfpgan": {
+        "path": "models/gfpgan_1.4.onnx",
+        "url": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth",
+        "urls": [
+            "https://huggingface.co/antigravity/gfpgan/resolve/main/gfpgan_1.4.onnx",
+        ],
+        "required": False,
+    },
+    "codeformer": {
+        "path": "models/codeformer.onnx",
+        "url": "https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth",
+        "urls": [
+            "https://huggingface.co/antigravity/codeformer/resolve/main/codeformer.onnx",
+        ],
+        "required": False,
+    },
 }
 
 
@@ -118,12 +134,16 @@ def check_models(auto_download: bool = False) -> None:
 
     for model_name, cfg in MODEL_CONFIG.items():
         model_path = get_model_path(model_name)
+        is_req = cfg.get("required", True)
         if model_path.exists():
             print(f"[model] Found: {model_path.name}")
             continue
 
-        print(f"[model] Missing: {model_path.name}")
-        missing_names.append(model_name)
+        if is_req:
+            print(f"[model] Missing required: {model_path.name}")
+            missing_names.append(model_name)
+        else:
+            print(f"[model] Optional enhancement model '{model_name}' absent (classical fallback ready).")
 
     if auto_download and missing_names:
         for model_name in list(missing_names):

@@ -1,0 +1,105 @@
+import logging
+from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+
+from backend.app.models.restoration.base import BaseFaceRestorer
+
+logger = logging.getLogger("personaforge.restoration.gfpgan")
+
+
+class GFPGANRestorer(BaseFaceRestorer):
+    """
+    GFPGAN v1.4 Face Restoration Adapter.
+    Permissive Apache 2.0 license (TencentARC).
+    Operates strictly on 512x512 aligned facial crops.
+    """
+
+    DEFAULT_MODEL_PATH: str = "models/gfpgan_1.4.onnx"
+
+    def __init__(self, model_path: str | None = None):
+        self.model_path = Path(model_path or self.DEFAULT_MODEL_PATH)
+        self.session = None
+        self._initialize()
+
+    def _initialize(self) -> None:
+        if not self.model_path.exists():
+            # Check models directory relative to project root
+            project_root = Path(__file__).resolve().parents[5]
+            alt_path = project_root / self.model_path
+            if alt_path.exists():
+                self.model_path = alt_path
+
+        if self.model_path.exists():
+            try:
+                import onnxruntime as ort
+                opts = ort.SessionOptions()
+                opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                self.session = ort.InferenceSession(
+                    str(self.model_path),
+                    sess_options=opts,
+                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                )
+                logger.info("Loaded GFPGAN restoration model from %s", self.model_path)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Could not initialize GFPGAN ONNX session: %s", e)
+                self.session = None
+        else:
+            logger.debug("GFPGAN model weights absent at %s", self.model_path)
+
+    def is_available(self) -> bool:
+        return self.session is not None
+
+    def restore_crop(self, crop: np.ndarray, blend_weight: float = 1.0) -> np.ndarray:
+        if crop is None or crop.size == 0 or not self.is_available():
+            return crop
+
+        orig_h, orig_w = crop.shape[:2]
+        weight = max(0.0, min(1.0, float(blend_weight)))
+        if weight == 0.0:
+            return crop
+
+        try:
+            # 1. Resize to canonical 512x512
+            input_face = cv2.resize(crop, (512, 512), interpolation=cv2.INTER_LINEAR)
+
+            # 2. Normalize BGR -> RGB, [0, 255] -> [-1, 1], NCHW
+            rgb = cv2.cvtColor(input_face, cv2.COLOR_BGR2RGB).astype(np.float32)
+            normalized = (rgb / 127.5) - 1.0
+            blob = np.transpose(normalized, (2, 0, 1))[np.newaxis, ...]
+
+            # 3. Inference
+            input_name = self.session.get_inputs()[0].name
+            outputs = self.session.run(None, {input_name: blob})
+            out = outputs[0][0]
+
+            # 4. Denormalize NCHW -> HWC, [-1, 1] -> [0, 255]
+            denorm = (np.transpose(out, (1, 2, 0)) + 1.0) * 127.5
+            denorm = np.clip(denorm, 0, 255).astype(np.uint8)
+            restored_bgr = cv2.cvtColor(denorm, cv2.COLOR_RGB2BGR)
+
+            # 5. Resize back to original crop resolution
+            if (orig_w, orig_h) != (512, 512):
+                restored_bgr = cv2.resize(restored_bgr, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
+
+            # 6. Blend
+            if weight < 1.0:
+                return cv2.addWeighted(restored_bgr, weight, crop, 1.0 - weight, 0)
+            return restored_bgr
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("GFPGAN inference error: %s. Falling back to input crop.", exc)
+            return crop
+
+    def get_model_info(self) -> dict[str, Any]:
+        return {
+            "name": "GFPGAN v1.4",
+            "type": "AI Generative Restoration",
+            "is_ai": True,
+            "license": "Apache 2.0 (TencentARC)",
+            "model_path": str(self.model_path),
+            "is_available": self.is_available(),
+            "description": "State-of-the-art blind face restoration with commercial Apache 2.0 license",
+        }
