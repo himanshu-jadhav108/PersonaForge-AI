@@ -15,6 +15,7 @@ import time
 import uuid
 import logging
 import asyncio
+import datetime
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -40,6 +41,7 @@ from backend.app.quality.dashboard import generate_dashboard as quality_generate
 from backend.app.selection.models import SelectionMode
 from backend.app.selection.engine import SmartFaceSelector
 from backend.app.selection.dashboard import generate_dashboard as selection_generate_dashboard
+from backend.app.analytics.router import router as analytics_router
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -173,6 +175,8 @@ app = FastAPI(
 )
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+app.include_router(analytics_router)
 
 
 
@@ -596,14 +600,26 @@ async def _run_pipeline(
                 "message":      f"✓ Done in {total_sec:.1f}s! ({size_mb:.1f} MB)",
                 "output":       out_file,
                 "file_size_mb": round(size_mb, 2),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "processing_time_sec": round(total_sec, 2)
             })
             logger.info("[%s] Job finished in %.1fs", job_id[:8], total_sec)
 
         except FaceSwapError as e:
-            db.update_job(job_id, {"status": "error", "stage": "error", "message": str(e)})
+            total_sec = time.perf_counter() - t_total
+            db.update_job(job_id, {
+                "status": "error", "stage": "error", "message": str(e),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "processing_time_sec": round(total_sec, 2)
+            })
             logger.error("[%s] Pipeline error: %s", job_id[:8], e)
         except Exception as e:
-            db.update_job(job_id, {"status": "error", "stage": "error", "message": f"System error: {e}"})
+            total_sec = time.perf_counter() - t_total
+            db.update_job(job_id, {
+                "status": "error", "stage": "error", "message": f"System error: {e}",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "processing_time_sec": round(total_sec, 2)
+            })
             logger.exception("[%s] Unexpected crash", job_id[:8])
         finally:
             # Robust cleanup of temporary assets

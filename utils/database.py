@@ -33,9 +33,23 @@ class JobDB:
                     input_width INTEGER,
                     input_height INTEGER,
                     resize_mode TEXT,
-                    created_at TEXT
+                    created_at TEXT,
+                    completed_at TEXT,
+                    processing_time_sec REAL
                 )
             """)
+            
+            # Migration for existing DBs
+            try:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN completed_at TEXT")
+            except sqlite3.OperationalError:
+                pass
+            
+            try:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN processing_time_sec REAL")
+            except sqlite3.OperationalError:
+                pass
+                
             conn.commit()
 
     def insert_job(self, job_data: Dict[str, Any]):
