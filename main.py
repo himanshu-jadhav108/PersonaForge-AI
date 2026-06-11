@@ -42,6 +42,7 @@ from backend.app.selection.models import SelectionMode
 from backend.app.selection.engine import SmartFaceSelector
 from backend.app.selection.dashboard import generate_dashboard as selection_generate_dashboard
 from backend.app.analytics.router import router as analytics_router
+from backend.app.realtime.router import router as realtime_router
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -177,6 +178,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(analytics_router)
+app.include_router(realtime_router)
 
 
 
