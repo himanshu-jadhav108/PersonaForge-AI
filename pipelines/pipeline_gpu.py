@@ -26,6 +26,7 @@ def process_video_gpu(
     progress_end:   int      = 80,
     db_manager               = None,
     job_id:      str         = None,
+    identity_validator       = None,
 ) -> tuple[int, int]:
     """
     Delegate to the original GPU processing loop unchanged.
@@ -42,4 +43,5 @@ def process_video_gpu(
         progress_end    = progress_end,
         db_manager      = db_manager,
         job_id          = job_id,
+        identity_validator = identity_validator,
     )

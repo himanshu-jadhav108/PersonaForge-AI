@@ -31,8 +31,15 @@ from video_utils import (
     get_video_info, get_file_size_mb, cleanup_temp_dirs,
 )
 from face_swap import FaceSwapper, FaceSwapError, QualityMode
+from face_swap import FaceSwapper, FaceSwapError, QualityMode
 from models.model_manager import check_models
 from utils.database import JobDB
+from backend.app.identity.validator import IdentityValidator
+from backend.app.quality.assessor import FaceQualityAssessor
+from backend.app.quality.dashboard import generate_dashboard as quality_generate_dashboard
+from backend.app.selection.models import SelectionMode
+from backend.app.selection.engine import SmartFaceSelector
+from backend.app.selection.dashboard import generate_dashboard as selection_generate_dashboard
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -309,6 +316,108 @@ async def download_video(filename: str):
         raise HTTPException(404, f"Output file '{safe_name}' not found.")
     return FileResponse(str(output_path), media_type="video/mp4", filename=safe_name)
 
+@app.get("/identity/report/{job_id}", summary="Get identity consistency report for a job")
+async def get_identity_report(job_id: str):
+    report_path = OUTPUTS_DIR / "reports" / f"identity_report_{job_id}.json"
+    if not report_path.exists():
+        raise HTTPException(404, f"Identity report for job '{job_id}' not found. It might still be processing or failed.")
+    return FileResponse(str(report_path), media_type="application/json", filename=report_path.name)
+
+@app.post("/quality/assess", summary="Assess face image quality")
+async def assess_face_quality(
+    image: UploadFile = File(..., description="Face image to assess"),
+):
+    _check_ext(image.filename, ALLOWED_IMAGE_EXTS, "image")
+    
+    img_data = await image.read()
+    if not img_data:
+        raise HTTPException(400, "Uploaded image is empty.")
+        
+    session_id  = uuid.uuid4().hex
+    img_path = UPLOADS_DIR / f"temp_quality_{session_id}{Path(image.filename).suffix.lower()}"
+    img_path.write_bytes(img_data)
+    
+    try:
+        # Use global swapper app if initialized, else Assessor handles it gracefully
+        assessor = FaceQualityAssessor(face_analysis_app=app.state.swapper._app if hasattr(app.state, 'swapper') else None)
+        report = assessor.assess_image(str(img_path))
+        
+        # Generate Dashboard
+        reports_dir = OUTPUTS_DIR / "reports"
+        dashboard_path = quality_generate_dashboard(report, reports_dir, session_id)
+        
+        return JSONResponse({
+            "report": report.model_dump(),
+            "dashboard_url": f"/quality/dashboard/{dashboard_path.name}"
+        })
+    except Exception as e:
+        logger.error(f"Failed to assess image quality: {e}")
+        raise HTTPException(500, f"Error assessing image: {str(e)}")
+    finally:
+        img_path.unlink(missing_ok=True)
+
+@app.get("/quality/dashboard/{filename}", summary="Get face quality dashboard HTML")
+async def get_quality_dashboard(filename: str):
+    safe_name = Path(filename).name
+    dashboard_path = OUTPUTS_DIR / "reports" / safe_name
+    if not dashboard_path.exists():
+        raise HTTPException(404, "Dashboard not found.")
+    return FileResponse(str(dashboard_path), media_type="text/html", filename=safe_name)
+
+@app.post("/selection/analyze", summary="Analyze video for smart face selection")
+async def analyze_face_selection(
+    video: UploadFile = File(..., description="Video to analyze"),
+    mode: SelectionMode = Query(SelectionMode.LARGEST, description="Ranking mode")
+):
+    _check_ext(video.filename, ALLOWED_VIDEO_EXTS, "video")
+    
+    vid_data = await video.read()
+    if not vid_data:
+        raise HTTPException(400, "Uploaded video is empty.")
+        
+    session_id = uuid.uuid4().hex
+    vid_path = UPLOADS_DIR / f"temp_selection_{session_id}{Path(video.filename).suffix.lower()}"
+    vid_path.write_bytes(vid_data)
+    
+    try:
+        app_state_swapper_app = app.state.swapper._app if hasattr(app.state, 'swapper') else None
+        if not app_state_swapper_app:
+            raise HTTPException(503, "AI Engine not warmed up yet.")
+            
+        thumbnails_dir = OUTPUTS_DIR / "selection_thumbnails"
+        selector = SmartFaceSelector(face_analysis_app=app_state_swapper_app, output_dir=thumbnails_dir)
+        
+        report = selector.analyze_video(session_id, str(vid_path), mode)
+        
+        # Generate dashboard
+        reports_dir = OUTPUTS_DIR / "reports"
+        dashboard_path = selection_generate_dashboard(report, reports_dir, session_id)
+        
+        report.dashboard_url = f"/selection/dashboard/{dashboard_path.name}"
+        
+        return JSONResponse(report.model_dump())
+    except Exception as e:
+        logger.error(f"Failed to analyze video selection: {e}")
+        raise HTTPException(500, f"Error analyzing video: {str(e)}")
+    finally:
+        vid_path.unlink(missing_ok=True)
+
+@app.get("/selection/dashboard/{filename}", summary="Get face selection dashboard HTML")
+async def get_selection_dashboard(filename: str):
+    safe_name = Path(filename).name
+    dashboard_path = OUTPUTS_DIR / "reports" / safe_name
+    if not dashboard_path.exists():
+        raise HTTPException(404, "Dashboard not found.")
+    return FileResponse(str(dashboard_path), media_type="text/html", filename=safe_name)
+
+@app.get("/selection/thumbnails/{filename}", summary="Get face selection thumbnail")
+async def get_selection_thumbnail(filename: str):
+    safe_name = Path(filename).name
+    thumbnail_path = OUTPUTS_DIR / "selection_thumbnails" / safe_name
+    if not thumbnail_path.exists():
+        raise HTTPException(404, "Thumbnail not found.")
+    return FileResponse(str(thumbnail_path), media_type="image/jpeg", filename=safe_name)
+
 
 # ─── Session Resolver ──────────────────────────────────────────────────────────
 
@@ -437,6 +546,8 @@ async def _run_pipeline(
             upd(stage_label, 36, f"Swapping faces on {device}…")
             prog_start, prog_end = 36, 78
 
+            identity_validator = IdentityValidator(job_id=job_id)
+
             swapped, skipped = await loop.run_in_executor(
                 None,
                 swapper.process_video_optimized,
@@ -450,11 +561,17 @@ async def _run_pipeline(
                 prog_end,
                 db,
                 job_id,
+                identity_validator
             )
             upd("rendering", 80, f"Swap complete ({swapped} swapped).")
 
             if swapped == 0:
                 raise FaceSwapError("No faces found in target video.")
+                
+            # Save identity report
+            reports_dir = OUTPUTS_DIR / "reports"
+            await loop.run_in_executor(None, identity_validator.save_report, reports_dir)
+            await loop.run_in_executor(None, identity_validator.generate_visual_charts, reports_dir)
 
             # ── Audio ─────────────────────────────────────────────────────────
             if is_preview: audio_path = None

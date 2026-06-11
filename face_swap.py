@@ -202,6 +202,7 @@ class FaceSwapper:
         progress_end:   int       = 78,
         db_manager                = None,
         job_id:      str          = None,
+        identity_validator        = None,
     ) -> tuple[int, int]:
         """
         Route to GPU or CPU pipeline based on detected hardware.
@@ -223,6 +224,7 @@ class FaceSwapper:
                 progress_end   = progress_end,
                 db_manager     = db_manager,
                 job_id         = job_id,
+                identity_validator = identity_validator,
             )
         else:
             from pipelines.pipeline_cpu import process_video_cpu
@@ -238,6 +240,7 @@ class FaceSwapper:
                 progress_end   = progress_end,
                 db_manager     = db_manager,
                 job_id         = job_id,
+                identity_validator = identity_validator,
             )
 
     # ── Source Face ────────────────────────────────────────────────────────────
@@ -294,6 +297,7 @@ class FaceSwapper:
         progress_end:   int      = 78,
         db_manager                = None,
         job_id:      str         = None,
+        identity_validator       = None,
     ) -> tuple[int, int]:
         """
         Core processing loop.
@@ -404,6 +408,14 @@ class FaceSwapper:
                         # Build mask for seamless clone blending
                         result = _blend_crop(frame, result_crop, x1c, y1c, x2c, y2c)
                         swapped += 1
+                        
+                        if identity_validator:
+                            swapped_faces = self._app.get(result_crop)
+                            if swapped_faces:
+                                swapped_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
+                                swapped_face = swapped_faces[0]
+                                timestamp = float(i)
+                                identity_validator.add_record(i, timestamp, source_face.embedding, swapped_face.embedding)
                     else:
                         result = frame
                         skipped += 1

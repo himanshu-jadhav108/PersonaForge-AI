@@ -77,6 +77,7 @@ def process_video_cpu(
     progress_end:   int     = 80,
     db_manager              = None,
     job_id:      str        = None,
+    identity_validator      = None,
 ) -> tuple[int, int]:
     """
     CPU-optimised face-swap loop.
@@ -245,6 +246,13 @@ def process_video_cpu(
                     result_small = _direct_paste(small, result_crop, x1c, y1c, x2c, y2c)
                     last_centre  = _centre(tracked_bbox)
                     swapped += 1
+                    
+                    if identity_validator:
+                        swapped_faces = swapper_app.get(result_crop)
+                        if swapped_faces:
+                            swapped_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
+                            swapped_face = swapped_faces[0]
+                            identity_validator.add_record(i, float(i), source_face.embedding, swapped_face.embedding)
                 else:
                     skipped += 1
             else:
