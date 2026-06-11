@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from models.model_manager import get_model_path, MODEL_CONFIG
 from utils.tracker_factory import make_tracker
+from backend.app.models.factory import ModelFactory
 
 logger = logging.getLogger("personaforge.face_swap")
 
@@ -93,7 +94,7 @@ class FaceSwapper:
 
     def __init__(self, model_name: str = "inswapper_128.onnx", use_gpu: bool = True):
         self._app       = None
-        self._model     = None
+        self._swap_adapter = None
         self._providers = ["CPUExecutionProvider"]
         self._mode      = "cpu"   # set properly in _load()
         self._load(model_name, use_gpu)
@@ -159,11 +160,11 @@ class FaceSwapper:
         logger.info("Loading swap model from '%s' …", model_path)
         t0 = time.perf_counter()
         try:
-            import insightface
-            self._model = insightface.model_zoo.get_model(model_path, providers=self._providers)
-            logger.info("Swap model loaded in %.2fs (%s)", time.perf_counter() - t0, self._providers[0])
+            self._swap_adapter = ModelFactory.get_model(model_name)
+            self._swap_adapter.load_model(model_path, self._providers)
+            logger.info("Swap model adapter loaded in %.2fs (%s)", time.perf_counter() - t0, self._providers[0])
         except Exception as e:
-            logger.error("Failed to load swap model: %s", e)
+            logger.error("Failed to load swap model adapter: %s", e)
             raise
 
         # ─── Warm up ──────────────────────────────────────────────────────────
@@ -230,7 +231,7 @@ class FaceSwapper:
             from pipelines.pipeline_cpu import process_video_cpu
             return process_video_cpu(
                 swapper_app    = self._app,
-                swapper_model  = self._model,
+                swap_adapter   = self._swap_adapter,
                 source_face    = source_face,
                 frames_dir     = frames_dir,
                 output_dir     = output_dir,
@@ -396,7 +397,7 @@ class FaceSwapper:
                     did_swap    = False
                     for tf in targets:
                         try:
-                            result_crop = self._model.get(result_crop, tf, source_face, paste_back=True)
+                            result_crop = self._swap_adapter.swap_face(result_crop, tf, source_face)
                             did_swap    = True
                         except Exception as e:
                             logger.debug("Swap on crop failed: %s", e)

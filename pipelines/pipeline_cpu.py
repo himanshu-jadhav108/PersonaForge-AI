@@ -67,7 +67,7 @@ def _direct_paste(
 
 def process_video_cpu(
     swapper_app,            # insightface FaceAnalysis instance
-    swapper_model,          # inswapper model instance
+    swap_adapter,           # BaseSwapModel adapter instance
     source_face,            # detected source face object
     frames_dir:  str,
     output_dir:  str,
@@ -236,7 +236,7 @@ def process_video_cpu(
                 did_swap    = False
                 for tf in targets:
                     try:
-                        result_crop = swapper_model.get(result_crop, tf, source_face, paste_back=True)
+                        result_crop = swap_adapter.swap_face(result_crop, tf, source_face)
                         did_swap    = True
                     except Exception as e:
                         logger.debug("[CPU] Swap on crop failed: %s", e)
