@@ -267,165 +267,104 @@ def resize_video(
     return output_path
 
 
-# ─── Frame Extraction ──────────────────────────────────────────────────────────
+# ─── Audio Extraction ────────────────────────────────────────────────────────────
 
-def extract_frames(
-    video_path:  str,
-    output_dir:  str,
-    max_seconds: float | None = None,
-) -> tuple[float, int, str | None]:
+def extract_audio(video_path: str, output_dir: str) -> str | None:
     """
-    Extract frames from a video to JPEG files.
-
-    Args:
-        video_path:  Input video path.
-        output_dir:  Directory to write frame_XXXXXX.jpg files.
-        max_seconds: If set, extract only the first this many seconds (preview mode).
-
-    Returns: (fps, total_frames_extracted, audio_path | None)
+    Extract the audio track from the video.
+    Returns the path to the AAC file, or None if no audio exists.
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    audio_path = str(out / "audio.aac")
+    
+    try:
+        _run_ffmpeg([
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-vn", "-acodec", "copy",
+            audio_path,
+        ], "extract_audio")
+        logger.info("Audio extracted → %s", audio_path)
+        return audio_path
+    except RuntimeError:
+        logger.info("No audio track found.")
+        return None
 
-    info = get_video_info(video_path)
-    fps  = info.get("fps", 30.0) or 30.0
+# ─── In-Memory Encoding (FFMPEG Pipe) ──────────────────────────────────────────
 
-    frame_pattern = str(out / "frame_%06d.jpg")
-    logger.info("Extracting frames from '%s' @ %.2f fps …", video_path, fps)
-    t0 = time.perf_counter()
-
+def get_ffmpeg_writer(
+    output_path: str,
+    fps: float,
+    width: int,
+    height: int,
+    bitrate: str = "6M",
+    cpu_mode: bool = False,
+    is_preview: bool = False,
+) -> subprocess.Popen:
+    """
+    Return a subprocess.Popen object configured to read raw BGR frames from stdin.
+    """
+    use_nvenc = (not cpu_mode) and _has_nvenc()
+    
     cmd = [
         "ffmpeg", "-y",
-        "-threads", "0",
-        "-i", video_path,
+        "-f", "rawvideo",
+        "-vcodec", "rawvideo",
+        "-s", f"{width}x{height}",
+        "-pix_fmt", "bgr24",
+        "-framerate", str(fps),
+        "-i", "-", # Read from stdin
     ]
-    if max_seconds is not None:
-        cmd += ["-t", str(max_seconds)]
-
-    cmd += [
-        "-q:v", "2",
-        "-f", "image2",
-        frame_pattern,
-    ]
-    _run_ffmpeg(cmd, "extract_frames")
-
-    frame_files  = sorted(out.glob("frame_*.jpg"))
-    total_frames = len(frame_files)
-    logger.info("Extracted %d frames in %.2fs → %s", total_frames, time.perf_counter() - t0, output_dir)
-
-    if total_frames == 0:
-        raise RuntimeError("Frame extraction produced 0 files. Video may be corrupt or unsupported.")
-
-    # Extract audio (only for the full video, not previews)
-    audio_path: str | None = None
-    if max_seconds is None:
-        audio_str = str(out.parent / f"{out.name}_audio.aac")
-        try:
-            _run_ffmpeg([
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-vn", "-acodec", "copy",
-                audio_str,
-            ], "extract_audio")
-            audio_path = audio_str
-            logger.info("Audio extracted → %s", audio_path)
-        except RuntimeError:
-            logger.info("No audio track found.")
-
-    return fps, total_frames, audio_path
-
-
-# ─── Video Reconstruction ──────────────────────────────────────────────────────
-
-def rebuild_video(
-    frames_dir:  str,
-    audio_path:  str | None,
-    output_path: str,
-    fps:         float,
-    bitrate:     str = "6M",
-    cpu_mode:    bool = False,
-    is_preview:  bool = False,
-) -> str:
-    """
-    Reconstruct an MP4 from JPEG frames.
-
-    Args:
-        frames_dir:  Directory containing frame_XXXXXX.jpg files.
-        audio_path:  Optional AAC audio file to mux in.
-        output_path: Output MP4 path.
-        fps:         Frame rate.
-        bitrate:     Target video bitrate e.g. "2M", "6M", "12M".
-        cpu_mode:    If True, force libx264 (CPU pipeline).
-        is_preview:  If True, use "ultrafast" preset for rapid generation.
-                     If False (default), use "medium" for better quality.
-
-    Uses h264_nvenc (GPU) if available and not cpu_mode, else libx264 ultrafast/medium.
-    """
-    frames_path   = Path(frames_dir)
-    frame_pattern = str(frames_path / "frame_%06d.jpg")
-    frame_count   = len(list(frames_path.glob("frame_*.jpg")))
-    if frame_count == 0:
-        raise RuntimeError(f"No processed frames found in '{frames_dir}'.")
-
-    logger.info("Rebuilding %d frames @ %.2f fps, bitrate=%s …", frame_count, fps, bitrate)
-    tmp_video = output_path.replace(".mp4", "_noaudio.mp4")
-    use_nvenc = (not cpu_mode) and _has_nvenc()
-    t0 = time.perf_counter()
-
+    
     if use_nvenc:
-        logger.info("Using NVENC encoder.")
-        # p2 is a faster preset for previews, p4 is standard quality
         preset_nv = "p2" if is_preview else "p4"
-        cmd_video = [
-            "ffmpeg", "-y",
-            "-framerate", str(int(fps)),
-            "-i", frame_pattern,
+        cmd += [
             "-c:v", "h264_nvenc",
             "-preset", preset_nv,
             "-b:v", bitrate,
             "-pix_fmt", "yuv420p",
-            tmp_video,
         ]
     else:
         preset = "ultrafast" if is_preview else "medium"
-        logger.info("%s encoder (preset=%s).", "CPU libx264" if cpu_mode else "libx264 (NVENC unavail)", preset)
-        cmd_video = [
-            "ffmpeg", "-y",
-            "-framerate", str(int(fps)),
-            "-i", frame_pattern,
+        cmd += [
             "-c:v", "libx264",
             "-preset", preset,
             "-b:v", bitrate,
             "-pix_fmt", "yuv420p",
             "-threads", "0",
-            tmp_video,
         ]
+        
+    cmd.append(output_path)
+    
+    logger.info("Starting FFMPEG writer: %s", " ".join(cmd))
+    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    _run_ffmpeg(cmd_video, "rebuild_video")
-    logger.info("Video encode done in %.2fs (bitrate=%s)", time.perf_counter() - t0, bitrate)
-
-    # Merge audio
+def mux_audio(video_path: str, audio_path: str | None, final_output_path: str) -> str:
+    """
+    Mux the silent encoded video with the extracted audio track.
+    """
+    t0 = time.perf_counter()
     if audio_path and Path(audio_path).exists():
         logger.info("Muxing audio: %s", audio_path)
         _run_ffmpeg([
             "ffmpeg", "-y",
-            "-i", tmp_video,
+            "-i", video_path,
             "-i", audio_path,
             "-c:v", "copy",
             "-c:a", "aac",
             "-shortest",
-            output_path,
+            final_output_path,
         ], "merge_audio")
         try:
-            os.remove(tmp_video)
+            os.remove(video_path)
         except OSError:
             pass
     else:
-        shutil.move(tmp_video, output_path)
-
-    logger.info("Output ready → %s", output_path)
-    return output_path
-
+        shutil.move(video_path, final_output_path)
+        
+    logger.info("Output ready in %.2fs → %s", time.perf_counter() - t0, final_output_path)
+    return final_output_path
 
 # ─── Cleanup ───────────────────────────────────────────────────────────────────
 
