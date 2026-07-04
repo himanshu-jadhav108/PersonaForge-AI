@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 def process_video_gpu(
     swapper: "FaceSwapper",
     source_face,
-    frames_dir:  str,
-    output_dir:  str,
+    video_path:  str,
+    output_path:  str,
     quality:     "QualityMode",
     face_index:  int         = -1,
     max_frames:  Optional[int] = None,
@@ -34,8 +34,8 @@ def process_video_gpu(
     """
     return swapper.process_video(
         source_face     = source_face,
-        frames_dir      = frames_dir,
-        output_dir      = output_dir,
+        video_path      = video_path,
+        output_path      = output_path,
         quality         = quality,
         face_index      = face_index,
         max_frames      = max_frames,
