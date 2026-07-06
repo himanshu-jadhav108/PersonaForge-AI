@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from config import config_cpu as cfg
 from utils.tracker_factory import make_tracker
+from video_utils import get_video_info, get_ffmpeg_writer
 
 logger = logging.getLogger("personaforge.pipeline_cpu")
 
@@ -45,8 +46,8 @@ def _make_tracker():
     return make_tracker("CPU")
 
 
-def _write_frame(path: str, frame: np.ndarray, quality: int = cfg.JPEG_QUALITY) -> None:
-    cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+def _write_frame_pipe(writer, frame: np.ndarray) -> None:
+    writer.stdin.write(frame.tobytes())
 
 
 def _direct_paste(
@@ -69,8 +70,8 @@ def process_video_cpu(
     swapper_app,            # insightface FaceAnalysis instance
     swap_adapter,           # BaseSwapModel adapter instance
     source_face,            # detected source face object
-    frames_dir:  str,
-    output_dir:  str,
+    video_path:  str,
+    output_path: str,
     face_index:  int        = -1,
     max_frames:  Optional[int] = None,
     progress_start: int     = 40,
@@ -81,39 +82,43 @@ def process_video_cpu(
 ) -> tuple[int, int]:
     """
     CPU-optimised face-swap loop.
-
-    Key differences from the GPU pipeline:
-      - Frames pre-scaled to 480p before any inference
-      - 1-in-N frame skipping with last-result reuse
-      - Detection cadence: every DETECT_EVERY *processed* frames
-      - No bilateral/unsharp enhancement pass
-      - Direct-paste blending (no seamlessClone)
-
-    Returns (swapped_count, skipped_count).
+    Now uses in-memory video streaming.
     """
-    FACE_CROP_PADDING = 0.30    # Slightly tighter crop for speed
+    FACE_CROP_PADDING = 0.30
 
-    frames_path = Path(frames_dir)
-    out_path    = Path(output_dir)
-    out_path.mkdir(parents=True, exist_ok=True)
+    info = get_video_info(video_path)
+    total = info.get("total_frames", 0)
+    fps = info.get("fps", 30.0)
+    orig_w = info.get("width", 0)
+    orig_h = info.get("height", 0)
 
-    frame_files = sorted(frames_path.glob("frame_*.jpg"))
-    if max_frames is not None:
-        frame_files = frame_files[:max_frames]
-    total = len(frame_files)
     if total == 0:
-        raise RuntimeError(f"No frames found in '{frames_dir}'")
+        raise RuntimeError(f"Could not read video info for '{video_path}'")
+        
+    if max_frames is not None:
+        total = min(total, max_frames)
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video '{video_path}'")
+        
+    # Open FFMPEG pipe writer
+    writer = get_ffmpeg_writer(
+        output_path=output_path,
+        fps=fps,
+        width=orig_w,
+        height=orig_h,
+        bitrate="6M",
+        cpu_mode=True,
+    )
 
     swapped = skipped = 0
     tracker      = None
-    tracked_bbox = None          # (x, y, w, h) in *original* frame coords
-    last_result  = None          # reuse buffer
-    last_centre  = None          # centre of tracked bbox in original frame
+    tracked_bbox = None
+    last_result  = None
+    last_centre  = None
 
-    detect_counter   = 0         # counts processed frames since last full detect
-    write_pool       = ThreadPoolExecutor(max_workers=cfg.WRITE_WORKERS)
-    write_futures    = []
-    BATCH_FLUSH      = 16
+    detect_counter   = 0
 
     t_start = time.perf_counter()
     logger.info(
@@ -121,30 +126,23 @@ def process_video_cpu(
         total, cfg.PROCESS_EVERY_N_FRAMES, cfg.DETECT_EVERY, cfg.TARGET_HEIGHT,
     )
 
-    for i, frame_file in enumerate(frame_files):
+    for i in range(total):
+        ret, frame = cap.read()
+        if not ret:
+            break
 
         # ── Frame skipping: reuse last result for skipped frames ───────────
         if i > 0 and (i % cfg.PROCESS_EVERY_N_FRAMES != 0):
-            out_file = str(out_path / frame_file.name)
             if last_result is not None:
-                write_futures.append(
-                    write_pool.submit(_write_frame, out_file, last_result)
-                )
+                writer.stdin.write(last_result.tobytes())
             else:
-                # No result yet — copy original
-                raw = cv2.imread(str(frame_file))
-                if raw is not None:
-                    write_futures.append(
-                        write_pool.submit(_write_frame, out_file, raw)
-                    )
+                writer.stdin.write(frame.tobytes())
             skipped += 1
-            _maybe_flush(write_futures, BATCH_FLUSH)
             _update_progress(db_manager, job_id, i, total,
                              progress_start, progress_end, swapped, skipped)
             continue
 
         # ── Load frame ─────────────────────────────────────────────────────
-        frame = cv2.imread(str(frame_file))
         if frame is None:
             skipped += 1
             continue
@@ -200,12 +198,8 @@ def process_video_cpu(
             dx = abs(cur_centre[0] - last_centre[0])
             dy = abs(cur_centre[1] - last_centre[1])
             if dx < cfg.REUSE_THRESHOLD_PX and dy < cfg.REUSE_THRESHOLD_PX:
-                out_file = str(out_path / frame_file.name)
-                write_futures.append(
-                    write_pool.submit(_write_frame, out_file, last_result)
-                )
+                writer.stdin.write(last_result.tobytes())
                 skipped += 1
-                _maybe_flush(write_futures, BATCH_FLUSH)
                 _update_progress(db_manager, job_id, i, total,
                                  progress_start, progress_end, swapped, skipped)
                 continue
@@ -269,22 +263,15 @@ def process_video_cpu(
 
         last_result = result_full
 
-        # ── Async JPEG Write ───────────────────────────────────────────────
-        out_file = str(out_path / frame_file.name)
-        write_futures.append(
-            write_pool.submit(_write_frame, out_file, result_full)
-        )
-        _maybe_flush(write_futures, BATCH_FLUSH)
+        # ── Direct Pipe Write ──────────────────────────────────────────────
+        writer.stdin.write(result_full.tobytes())
         _update_progress(db_manager, job_id, i, total,
                          progress_start, progress_end, swapped, skipped)
 
-    # Drain remaining writes
-    for f in write_futures:
-        try:
-            f.result()
-        except Exception as e:
-            logger.warning("[CPU] Frame write error: %s", e)
-    write_pool.shutdown(wait=False)
+    # Clean up
+    cap.release()
+    writer.stdin.close()
+    writer.wait()
 
     elapsed = time.perf_counter() - t_start
     fps_out = total / elapsed if elapsed > 0 else 0
