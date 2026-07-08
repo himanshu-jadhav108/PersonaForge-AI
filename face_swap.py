@@ -23,6 +23,7 @@ from typing import Optional
 from models.model_manager import get_model_path, MODEL_CONFIG
 from utils.tracker_factory import make_tracker
 from backend.app.models.factory import ModelFactory
+from video_utils import get_video_info, get_ffmpeg_writer
 
 logger = logging.getLogger("personaforge.face_swap")
 
@@ -194,8 +195,8 @@ class FaceSwapper:
     def process_video_optimized(
         self,
         source_face,
-        frames_dir:  str,
-        output_dir:  str,
+        video_path:  str,
+        output_path:  str,
         quality:     "QualityMode" = None,
         face_index:  int          = -1,
         max_frames:  Optional[int] = None,
@@ -216,8 +217,8 @@ class FaceSwapper:
             return process_video_gpu(
                 swapper        = self,
                 source_face    = source_face,
-                frames_dir     = frames_dir,
-                output_dir     = output_dir,
+                video_path     = video_path,
+                output_path     = output_path,
                 quality        = quality if quality is not None else QualityMode.BALANCED,
                 face_index     = face_index,
                 max_frames     = max_frames,
@@ -233,8 +234,8 @@ class FaceSwapper:
                 swapper_app    = self._app,
                 swap_adapter   = self._swap_adapter,
                 source_face    = source_face,
-                frames_dir     = frames_dir,
-                output_dir     = output_dir,
+                video_path     = video_path,
+                output_path     = output_path,
                 face_index     = face_index,
                 max_frames     = max_frames,
                 progress_start = progress_start,
@@ -284,13 +285,34 @@ class FaceSwapper:
             logger.debug("Similarity check failed: %s", e)
             return 0.0
 
+    def check_face_similarity_img(self, source_face, frame: np.ndarray) -> float:
+        """
+        Compute cosine similarity directly from a BGR numpy array.
+        """
+        if frame is None:
+            return 0.0
+        faces = self._app.get(frame)
+        if not faces:
+            return 0.0
+        target = max(faces, key=lambda f: _bbox_area(f.bbox))
+        try:
+            src_emb = np.array(source_face.embedding, dtype=np.float32)
+            tgt_emb = np.array(target.embedding,      dtype=np.float32)
+            score = float(np.dot(src_emb, tgt_emb) /
+                          (np.linalg.norm(src_emb) * np.linalg.norm(tgt_emb) + 1e-9))
+            logger.info("Face similarity score: %.3f", score)
+            return score
+        except Exception as e:
+            logger.debug("Similarity check failed: %s", e)
+            return 0.0
+
     # ── Video Processing Pipeline ──────────────────────────────────────────────
 
     def process_video(
         self,
         source_face,
-        frames_dir:  str,
-        output_dir:  str,
+        video_path:  str,
+        output_path: str,
         quality:     QualityMode = QualityMode.BALANCED,
         face_index:  int         = -1,   # -1 = all faces
         max_frames:  Optional[int] = None,  # None = all; N = preview mode
@@ -302,43 +324,43 @@ class FaceSwapper:
     ) -> tuple[int, int]:
         """
         Core processing loop.
-
-        Optimisations:
-          • KCF tracking — face detection only every DETECT_EVERY_N_FRAMES frames
-          • Crop-based inference — only the face ROI is sent to the model
-          • Seamless clone blending — smooth face boundary
-          • Quality-driven enhancement (sharpen / bilateral filter)
-          • Threaded JPEG writes so the GPU stays busy
-          • Progress updates into job_status[job_id]
-
-        Returns (swapped_count, skipped_count).
+        Now uses in-memory video streaming.
         """
-        frames_path = Path(frames_dir)
-        out_path    = Path(output_dir)
-        out_path.mkdir(parents=True, exist_ok=True)
+        info = get_video_info(video_path)
+        total = info.get("total_frames", 0)
+        fps = info.get("fps", 30.0)
+        orig_w = info.get("width", 0)
+        orig_h = info.get("height", 0)
 
-        frame_files = sorted(frames_path.glob("frame_*.jpg"))
-        if max_frames is not None:
-            frame_files = frame_files[:max_frames]
-        total = len(frame_files)
         if total == 0:
-            raise RuntimeError(f"No frames found in '{frames_dir}'")
+            raise RuntimeError(f"Could not read video info for '{video_path}'")
+            
+        if max_frames is not None:
+            total = min(total, max_frames)
 
-        jpeg_q   = _JPEG_QUALITY[quality]
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video '{video_path}'")
+            
+        writer = get_ffmpeg_writer(
+            output_path=output_path,
+            fps=fps,
+            width=orig_w,
+            height=orig_h,
+            bitrate="6M",
+            cpu_mode=False,
+        )
+
         swapped  = skipped = 0
         tracker  = None
         tracked_bbox = None
 
-        write_pool    = ThreadPoolExecutor(max_workers=WRITE_WORKERS)
-        write_futures = []
-
         t_start = time.perf_counter()
 
-        for i, frame_file in enumerate(frame_files):
-            frame = cv2.imread(str(frame_file))
-            if frame is None:
-                skipped += 1
-                continue
+        for i in range(total):
+            ret, frame = cap.read()
+            if not ret:
+                break
 
             h, w     = frame.shape[:2]
             face_found = False
@@ -427,15 +449,8 @@ class FaceSwapper:
                 result  = frame
                 skipped += 1
 
-            # ── Async JPEG Write ───────────────────────────────────────────
-            out_file = str(out_path / frame_file.name)
-            write_futures.append(
-                write_pool.submit(_write_frame, out_file, result, jpeg_q)
-            )
-            if len(write_futures) >= BATCH_FLUSH_SIZE:
-                for f in write_futures:
-                    f.result()
-                write_futures.clear()
+            # ── Direct Pipe Write ──────────────────────────────────────────
+            writer.stdin.write(result.tobytes())
 
             # ── Progress ───────────────────────────────────────────────────
             if db_manager is not None and job_id is not None:
@@ -446,13 +461,10 @@ class FaceSwapper:
                     "message": f"Frame {i+1}/{total} — swapped={swapped}, skipped={skipped}"
                 })
 
-        # Drain remaining writes
-        for f in write_futures:
-            try:
-                f.result()
-            except Exception as e:
-                logger.warning("Frame write error: %s", e)
-        write_pool.shutdown(wait=False)
+        # Clean up
+        cap.release()
+        writer.stdin.close()
+        writer.wait()
 
         elapsed = time.perf_counter() - t_start
         fps_out = total / elapsed if elapsed > 0 else 0
