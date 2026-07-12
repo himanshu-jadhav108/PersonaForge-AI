@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from video_utils import (
-    extract_frames, rebuild_video, resize_video,
+    extract_audio, mux_audio, resize_video,
     get_video_info, get_file_size_mb, cleanup_temp_dirs,
 )
 from face_swap import FaceSwapper, FaceSwapError, QualityMode
@@ -516,17 +516,22 @@ async def _run_pipeline(
             else:
                 upd("processing", 14, f"Resolution OK ({in_w}x{in_h}).")
 
-            # ── Extract frames ────────────────────────────────────────────────
-            suffix  = "_preview" if is_preview else ""
-            frames_dir  = str(FRAMES_DIR / f"{job_id}{suffix}")
-            upd("processing", 16, "Extracting frames…")
-            fps, total_frames, audio_path = await loop.run_in_executor(
-                None, extract_frames, resized_path, frames_dir, preview_seconds
-            )
-            upd("processing", 30, f"Extracted {total_frames} frames.")
-
-            if total_frames == 0:
-                raise FaceSwapError("No frames extracted. Video may be corrupt.")
+            # ── Extract audio ──────────────────────────────────────────────────
+            audio_path = None
+            if not is_preview:
+                upd("processing", 16, "Extracting audio…")
+                audio_dir = str(OUTPUTS_DIR / f"{job_id}_audio")
+                audio_path = await loop.run_in_executor(
+                    None, extract_audio, resized_path, audio_dir
+                )
+            
+            # Since we now use in-memory stream, we just pass the video path.
+            total_frames = info.get("total_frames", 0)
+            fps = info.get("fps", 30.0)
+            if is_preview and preview_seconds is not None:
+                total_frames = min(total_frames, int(fps * preview_seconds))
+            
+            upd("processing", 30, f"Ready to process {total_frames} frames in memory.")
 
             # ── Source face ───────────────────────────────────────────────────
             upd("processing", 32, "Analysing source face…")
@@ -536,18 +541,27 @@ async def _run_pipeline(
 
             # ── Similarity check ──────────────────────────────────────────────
             upd("processing", 34, "Checking face similarity…")
-            from pathlib import Path as _P
-            sample_frames = sorted(_P(frames_dir).glob("frame_*.jpg"))
+            
+            # Use source face for similarity check directly against the input video
+            cap = cv2.VideoCapture(resized_path)
             sim_score = 0.0
-            if sample_frames:
-                mid_frame = str(sample_frames[len(sample_frames) // 2])
-                sim_score = await loop.run_in_executor(
-                    None, swapper.check_face_similarity, source_face, mid_frame
-                )
+            if cap.isOpened():
+                total_frames_tmp = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                if total_frames_tmp > 0:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, total_frames_tmp // 2)
+                    ret, mid_frame_img = cap.read()
+                    if ret:
+                        sim_score = await loop.run_in_executor(
+                            None, swapper.check_face_similarity_img, source_face, mid_frame_img
+                        )
+                cap.release()
             db.update_job(job_id, {"similarity_score": round(sim_score, 3)})
 
             # ── Face swap ─────────────────────────────────────────────────────
-            processed_dir = str(FRAMES_DIR / f"{job_id}_out")
+            kind_tag   = "preview" if is_preview else "output"
+            out_file   = f"personaforge_{kind_tag}_{session_id[:8]}_{job_id[:8]}.mp4"
+            out_path   = str(OUTPUTS_DIR / out_file)
+            
             stage_label   = "enhancing" if qmode != QualityMode.FAST else "processing"
             upd(stage_label, 36, f"Swapping faces on {device}…")
             prog_start, prog_end = 36, 78
@@ -558,11 +572,11 @@ async def _run_pipeline(
                 None,
                 swapper.process_video_optimized,
                 source_face,
-                frames_dir,
-                processed_dir,
+                resized_path,
+                out_path,
                 qmode,
                 face_index,
-                None,
+                total_frames if is_preview else None,
                 prog_start,
                 prog_end,
                 db,
@@ -580,17 +594,13 @@ async def _run_pipeline(
             await loop.run_in_executor(None, identity_validator.generate_visual_charts, reports_dir)
 
             # ── Audio ─────────────────────────────────────────────────────────
-            if is_preview: audio_path = None
-
-            # ── Rebuild video ─────────────────────────────────────────────────
-            kind_tag   = "preview" if is_preview else "output"
-            out_file   = f"personaforge_{kind_tag}_{session_id[:8]}_{job_id[:8]}.mp4"
-            out_path   = str(OUTPUTS_DIR / out_file)
-            upd("rendering", 82, "Encoding final video…")
-            await loop.run_in_executor(
-                None, rebuild_video, processed_dir, audio_path, out_path, fps,
-                bitrate, mode == "cpu", is_preview,
-            )
+            if not is_preview and audio_path:
+                upd("rendering", 82, "Muxing final audio…")
+                final_out = out_path.replace(".mp4", "_final.mp4")
+                await loop.run_in_executor(
+                    None, mux_audio, out_path, audio_path, final_out
+                )
+                out_path = final_out
 
             # ── Done ──────────────────────────────────────────────────────────
             size_mb   = get_file_size_mb(out_path)
