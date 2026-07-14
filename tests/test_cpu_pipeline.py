@@ -6,7 +6,7 @@ Tests that:
   2. FaceSwapper forced into CPU mode reports mode == 'cpu'
   3. process_video_optimized() routes to pipeline_cpu (mocked)
   4. process_video() (GPU path) is NOT called in CPU mode
-  5. video_utils.rebuild_video() uses ultrafast preset in cpu_mode=True
+  5. video_utils.get_ffmpeg_writer() uses ultrafast preset in cpu_mode=True and is_preview=True
 """
 
 import sys
@@ -111,11 +111,11 @@ class TestFaceSwapperMode(unittest.TestCase):
         swapper._mode = "cpu"
         
         with patch("pipelines.pipeline_cpu.process_video_cpu", return_value=(5, 2)) as mock_cpu, \
-             patch.object(swapper, "process_video") as mock_gpu:
+             patch("pipelines.pipeline_gpu.process_video_gpu") as mock_gpu:
             result = swapper.process_video_optimized(
                 source_face=MagicMock(),
-                frames_dir="/tmp/frames",
-                output_dir="/tmp/out",
+                video_path="/tmp/video.mp4",
+                output_path="/tmp/out.mp4",
             )
             mock_cpu.assert_called_once()
             mock_gpu.assert_not_called()
@@ -131,8 +131,8 @@ class TestFaceSwapperMode(unittest.TestCase):
              patch("pipelines.pipeline_cpu.process_video_cpu") as mock_cpu:
             result = swapper.process_video_optimized(
                 source_face=MagicMock(),
-                frames_dir="/tmp/frames",
-                output_dir="/tmp/out",
+                video_path="/tmp/video.mp4",
+                output_path="/tmp/out.mp4",
             )
             mock_gpu.assert_called_once()
             mock_cpu.assert_not_called()
@@ -141,44 +141,27 @@ class TestFaceSwapperMode(unittest.TestCase):
 
 
 class TestVideoUtilsCPUMode(unittest.TestCase):
-    """Verify rebuild_video uses ultrafast in cpu_mode."""
+    """Verify get_ffmpeg_writer uses ultrafast in cpu_mode and is_preview."""
 
     def test_cpu_mode_uses_ultrafast(self):
-        """rebuild_video with cpu_mode=True should call ffmpeg with ultrafast preset."""
-        captured_cmds = []
-
-        def mock_run_ffmpeg(cmd, label=""):
-            captured_cmds.append(cmd)
-            # Return fake completed process
-            result = MagicMock()
-            result.returncode = 0
-            return result
-
-        with patch("video_utils._run_ffmpeg", side_effect=mock_run_ffmpeg), \
-             patch("video_utils._has_nvenc", return_value=False), \
-             patch("pathlib.Path.glob", return_value=[MagicMock()] * 5), \
-             patch("os.path.exists", return_value=False), \
-             patch("shutil.move"):
-            from video_utils import rebuild_video
-            try:
-                rebuild_video(
-                    frames_dir="/tmp/frames",
-                    audio_path=None,
-                    output_path="/tmp/out.mp4",
-                    fps=30.0,
-                    bitrate="1M",
-                    cpu_mode=True,
-                )
-            except Exception:
-                pass  # may fail on missing files — we only care about cmd content
-
-        video_cmd = next((c for c in captured_cmds if "-c:v" in c), None)
-        if video_cmd:
-            self.assertIn("ultrafast", video_cmd,
-                "cpu_mode=True must use ultrafast FFmpeg preset")
-            print("  [OK] cpu_mode=True uses ultrafast preset in rebuild_video")
-        else:
-            print("  [SKIP] ffmpeg cmd not captured — test environment limitation")
+        """get_ffmpeg_writer with cpu_mode=True and is_preview=True should call ffmpeg with ultrafast preset."""
+        with patch("subprocess.Popen") as mock_popen, \
+             patch("video_utils._has_nvenc", return_value=False):
+            from video_utils import get_ffmpeg_writer
+            get_ffmpeg_writer(
+                output_path="/tmp/out.mp4",
+                fps=30.0,
+                width=640,
+                height=480,
+                bitrate="1M",
+                cpu_mode=True,
+                is_preview=True,
+            )
+            mock_popen.assert_called_once()
+            args, kwargs = mock_popen.call_args
+            cmd = args[0]
+            self.assertIn("ultrafast", cmd, "cpu_mode=True and is_preview=True must use ultrafast FFmpeg preset")
+            print("  [OK] cpu_mode=True and is_preview=True uses ultrafast preset in get_ffmpeg_writer")
 
 
 class TestOrientationAndResizePlanning(unittest.TestCase):
@@ -229,38 +212,24 @@ class TestOrientationAndResizePlanning(unittest.TestCase):
         self.assertIsNone(_portrait_crop_plan(1080, 1920))
 
     def test_gpu_mode_not_ultrafast(self):
-        """rebuild_video with cpu_mode=False should NOT use ultrafast when no NVENC."""
-        captured_cmds = []
-
-        def mock_run_ffmpeg(cmd, label=""):
-            captured_cmds.append(cmd)
-            return MagicMock()
-
-        with patch("video_utils._run_ffmpeg", side_effect=mock_run_ffmpeg), \
-             patch("video_utils._has_nvenc", return_value=False), \
-             patch("pathlib.Path.glob", return_value=[MagicMock()] * 5), \
-             patch("os.path.exists", return_value=False), \
-             patch("shutil.move"):
-            from video_utils import rebuild_video
-            try:
-                rebuild_video(
-                    frames_dir="/tmp/frames",
-                    audio_path=None,
-                    output_path="/tmp/out.mp4",
-                    fps=30.0,
-                    bitrate="3M",
-                    cpu_mode=False,
-                )
-            except Exception:
-                pass
-
-        video_cmd = next((c for c in captured_cmds if "-c:v" in c), None)
-        if video_cmd:
-            self.assertNotIn("ultrafast", video_cmd,
-                "cpu_mode=False must NOT use ultrafast")
-            print("  [OK] cpu_mode=False does NOT use ultrafast (GPU path preserved)")
-        else:
-            print("  [SKIP] ffmpeg cmd not captured — test environment limitation")
+        """get_ffmpeg_writer with is_preview=False should NOT use ultrafast when no NVENC."""
+        with patch("subprocess.Popen") as mock_popen, \
+             patch("video_utils._has_nvenc", return_value=False):
+            from video_utils import get_ffmpeg_writer
+            get_ffmpeg_writer(
+                output_path="/tmp/out.mp4",
+                fps=30.0,
+                width=640,
+                height=480,
+                bitrate="3M",
+                cpu_mode=False,
+                is_preview=False,
+            )
+            mock_popen.assert_called_once()
+            args, kwargs = mock_popen.call_args
+            cmd = args[0]
+            self.assertNotIn("ultrafast", cmd, "is_preview=False must NOT use ultrafast")
+            print("  [OK] is_preview=False does NOT use ultrafast (standard path preserved)")
 
 
 if __name__ == "__main__":
