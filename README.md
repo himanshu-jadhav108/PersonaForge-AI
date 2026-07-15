@@ -41,6 +41,9 @@ PersonaForge is engineered to provide a seamless transition from initial concept
 
 ## 🏗️ System Architecture
 
+### 💎 System Architecture Blueprint
+![PersonaForge AI Architecture Diagram](static/assets/personaforge_architecture_diagram.png)
+
 ### 1. High-Level Process Flow
 
 A streamlined view of how data flows through the PersonaForge engine.
