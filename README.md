@@ -3,205 +3,188 @@
 ![PersonaForge AI Banner](static/assets/Persona_Forge_Ai_Banner.jpeg)
 
 <div align="center">
-  <h3>⚡ <b>The ultimate production-grade video face transformation engine.</b></h3>
-  <p><i>A Project by <a href="#-about-the-author">Himanshu Jadhav</a></i></p>
+  <h3>⚡ <b>The ultimate privacy-focused local video face transformation engine.</b></h3>
+  <p><i>Privacy-First. GPU-Accelerated. 100% Local.</i></p>
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![CUDA](https://img.shields.io/badge/CUDA-GPU%20Accelerated-76B900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-zone)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Production%20Ready-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Status](https://img.shields.io/badge/Status-Project%20Complete-2EA043)](https://github.com/himanshu-jadhav108/PersonaForge-AI)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![CUDA](https://img.shields.io/badge/CUDA-GPU%20Accelerated-76B900?style=for-the-badge&logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-zone)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Local%20Endpoint-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Status](https://img.shields.io/badge/Status-Project%20Complete-2EA043?style=for-the-badge)](https://github.com/himanshu-jadhav108/PersonaForge-AI)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 </div>
 
 ---
 
-## 📖 Getting Started
+## 📌 Table of Contents
+1. [📖 Overview](#-overview)
+2. [✨ Core Features](#-core-features)
+3. [🚀 Getting Started](#-getting-started)
+4. [📽️ Transformation Showcase](#%EF%B8%8F-transformation-showcase)
+5. [🏗️ System Architecture](#%EF%B8%8F-system-architecture)
+6. [📊 Technical Benchmark: GPU vs. CPU](#-technical-benchmark-gpu-vs-cpu)
+7. [🔍 Validation & Realism Constraints](#-validation--realism-constraints)
+8. [🎛️ Slide Presentation Generator](#%EF%B8%8F-slide-presentation-generator)
+9. [📁 Project Architecture](#-project-architecture)
+10. [⚙️ Tuning Configurations](#%EF%B8%8F-tuning-configurations)
+11. [👤 About the Author](#-about-the-author)
 
-To set up the prerequisites, run the FastAPI server or the Streamlit analytics dashboard, and benchmark the pipeline, please refer to the detailed [PersonaForge AI Getting Started Guide](docs/guide.md).
+---
+
+## 📖 Overview
+
+PersonaForge AI is an advanced computer vision engineering project designed to run high-fidelity face transformations entirely on local consumer hardware. By decoupling heavy AI dependencies and implementing a robust Hardware Abstraction Layer, the system dynamically schedules execution between GPU (CUDA-accelerated) and CPU branches. 
+
+This project is built for AI engineers, recruiters, and open-source contributors looking to explore high-throughput local inference pipelines without relying on external cloud APIs or exposing private media files.
+
+---
+
+## ✨ Core Features
+
+- 🔒 **Privacy-First Operations**: 100% offline. Zero tracking pixels, zero API calls, and zero external cloud uploads.
+- ⚙️ **Hardware-Aware Execution**: A custom initialization engine that detects local environment bindings and dynamically routes frame arrays to CUDA execution providers or CPU fallbacks.
+- ⚡ **In-Memory Streaming (RAM I/O)**: Bypasses standard disk-writing bottleneck loops by buffering frames in RAM and piping them directly to FFmpeg stdin via standard stream buffers.
+- 📈 **Facial Identity Consistency**: Automatically computes the Cosine Similarity between the source identity embedding and every processed target frame face node to log identity drift statistics.
+- 💨 **Kernelized Correlation Filter (KCF) Tracking**: Reduces expensive facial detection calls (InsightFace inference loops) by 90% by using adaptive KCF tracking blocks on intermediate frames.
+
+---
+
+## 🚀 Getting Started
+
+To install dependencies, download model weights, set up the FastAPI server, run the Streamlit dashboard, or profile execution providers, please refer to our step-by-step [PersonaForge AI Getting Started Guide](docs/guide.md).
 
 ---
 
 ## 📽️ Transformation Showcase
 
-![Demo - Personaforge](static/assets/Before_After_GIF.gif)
+Here is a demo loop showing the input and high-fidelity output alignment:
 
----
-
-## 🛤️ User Journey: From Raw Input to High-Fidelity
-
-PersonaForge is engineered to provide a seamless transition from initial concept to professional export.
-
-1.  **Identity Definition**: The user uploads a single high-resolution source image (Identity) and a target video (Scene).
-2.  **Hardware Profiling**: The system instantly detects if a CUDA-capable GPU is available, dynamically selecting the optimized processing branch.
-3.  **Iterative Validation**: Users can generate a **Zero-Latency Preview** (3-5 seconds) to verify facial alignment and identity consistency.
-4.  **Master Rendering**: Upon validation, the user commits to a full render, choosing between **Fast**, **Balanced**, or **High** quality profiles.
-5.  **Final Export**: The transformation is muxed with original audio and exported at professional bitrates (up to 12 Mbps).
+![Transformation Showcase](static/assets/Before_After_GIF.gif)
 
 ---
 
 ## 🏗️ System Architecture
 
-### 💎 System Architecture Blueprint
-![PersonaForge AI Architecture Diagram](static/assets/personaforge_architecture_diagram.png)
+### 1. System Architecture Blueprint
+The application is structured into decoupled frontend presentation, API gateway, and model runtime layers.
 
-### 1. High-Level Process Flow
+![PersonaForge AI Architecture Diagram](static/assets/Architecture_Diagram.png)
 
-A streamlined view of how data flows through the PersonaForge engine.
+### 2. Processing Pipeline process flow
+The modular pipeline manages frame ingestion, boundary box extraction, model embedding, Poisson blending, and final audio MUXing.
 
-```mermaid
-graph LR
-    Input["📥 Users Input (Image/Video)"] --> Router["⚙️ Backend Router (FastAPI)"]
-    Router --> Hardware["🔍 Hardware Dispatcher"]
-    Hardware --> Pipeline["🧠 AI Transformation Pipeline"]
-    Pipeline --> Rebuild["🎬 Video Reconstruction (FFmpeg)"]
-    Rebuild --> Output["💎 High-Fidelity Output"]
+![PersonaForge AI Process Flow Diagram](static/assets/Process_Flow.png)
 
-    %% Visual Styling
-    style Input fill:#E8F1FF,stroke:#2F6FED,stroke-width:2px,color:#0B1F44
-    style Router fill:#FFF7E6,stroke:#F9AB00,stroke-width:2px,color:#4A3200
-    style Hardware fill:#FFF7E6,stroke:#F9AB00,stroke-width:2px,color:#4A3200
-    style Pipeline fill:#F3E8FF,stroke:#9333EA,stroke-width:2px,color:#2B145C
-    style Rebuild fill:#FFF7E6,stroke:#F9AB00,stroke-width:2px,color:#4A3200
-    style Output fill:#E9FFF2,stroke:#10B981,stroke-width:2px,color:#0A3318
-```
-
-### 2. Engineering Blueprint (Tier 2 Detail)
-
-An in-depth look at the **Dynamic Hardware Dispatcher** and the multi-pipeline logic.
-
-```mermaid
-flowchart TD
-    subgraph Input_Layer [Input Handling]
-        U1[Source Photo]
-        U2[Target Video]
-    end
-
-    API[FastAPI Gateway]
-
-    subgraph Dispatcher [Dynamic Hardware Dispatcher]
-        HW_DET{CUDA Available?}
-    end
-
-    subgraph GPU_Pipeline [🔥 High-Fidelity Branch]
-        FE_G[Full Frame Extraction]
-        FD_G[Precise Detection]
-        SW_G[CUDA Swapper Inference]
-        BL_G[Poisson Seamless Blending]
-    end
-
-    subgraph CPU_Pipeline [💨 Performance-Optimized Branch]
-        RS_C[720p Proxy Downscaling]
-        SK_C[Adaptive Frame Skip]
-        TR_C[KCF Face Tracking]
-        SW_C[CPU-Accelerated Swap]
-        BL_C[Alpha-Compositing]
-    end
-
-    ENC[Video Reconstruction MUX]
-    OUT[Resulting transformation]
-
-    U1 & U2 --> API
-    API --> HW_DET
-    HW_DET -- "Yes" --> GPU_Pipeline
-    HW_DET -- "No"  --> CPU_Pipeline
-    GPU_Pipeline & CPU_Pipeline --> ENC
-    ENC --> OUT
-
-    %% Design Styling
-    style U1 fill:#E8F1FF,stroke:#2F6FED,stroke-width:2px,color:#0B1F44
-    style U2 fill:#E8F1FF,stroke:#2F6FED,stroke-width:2px,color:#0B1F44
-    style API fill:#FFF7E6,stroke:#F9AB00,stroke-width:2px,color:#4A3200
-    style HW_DET fill:#FFF7E6,stroke:#F9AB00,stroke-width:3px,color:#4A3200
-    style ENC fill:#FFF7E6,stroke:#F9AB00,stroke-width:2px,color:#4A3200
-    style GPU_Pipeline fill:#F3E8FF,stroke:#9333EA,stroke-width:2px,color:#2B145C
-    style CPU_Pipeline fill:#E0F2FE,stroke:#0284C7,stroke-width:2px,color:#074D70
-    style OUT fill:#E9FFF2,stroke:#10B981,stroke-width:2px,color:#0A3318
-```
-
-> [TIP]
-> **Design Insight: Why KCF Tracking?**
-> Running face detection (InsightFace) on every frame is the primary CPU bottleneck. By using **Kernelized Correlation Filters (KCF)** to "bridge" frames, we reduce the heavy AI detection overhead by 90%, enabling a fluid 3-4 FPS experience even on standard laptops.
+> [!TIP]
+> **Why KCF Face Tracking?**
+> running face detection models (InsightFace) on every frame is the primary CPU bottleneck. By introducing **Kernelized Correlation Filters (KCF)** to track boundary boxes across intermediate frames, we avoid calling the heavy detection networks on 9 out of 10 frames, increasing processing throughput by 90% on laptops.
 
 ---
 
-## ⚡ Technical Benchmark: GPU vs. CPU
+## 📊 Technical Benchmark: GPU vs. CPU
 
-| Metric                 | 🔥 GPU Pipeline (High-Fidelity)     | 💨 CPU Pipeline (Optimized)    |
-| :--------------------- | :---------------------------------- | :----------------------------- |
-| **Target Audience**    | Professional Renders / High-End PCs | Prototyping / Consumer Laptops |
-| **Max Resolution**     | **Original / 1080p / 4K**           | **720p (Smart Downscale)**     |
-| **Bitrate**            | 12 Mbps (Cinema Standard)           | 6 Mbps (Web-Optimized)         |
-| **Blending Technique** | **Poisson (SeamlessClone)**         | **Direct Alpha-Paste**         |
-| **Face Tracking**      | Frame-by-Frame Precision            | KCF Bridge (1-in-10 Detection) |
-| **Est. Processing**    | ~40s (10s @ 30fps)                  | ~110s (10s @ 30fps)            |
-
----
-
-## 🔍 Constraints & Realism (Edge Cases)
-
-To ensure technical trust, we acknowledge the current physical limits of the identity transfer engine.
-
-| Scenario              | Success Rate | System Behavior                                                  |
-| :-------------------- | :----------- | :--------------------------------------------------------------- |
-| **Centric Face**      | 🟢 **99%**   | Perfect alignment and blending.                                  |
-| **Extreme Profile**   | 🟡 **70%**   | Identity may "drift" if landmarks are occluded.                  |
-| **Low-Light / Grain** | 🟡 **75%**   | Potential for visible seams in seamless cloning.                 |
-| **Rapid Motion**      | 🔴 **60%**   | KCF Tracking may lose target; full detection fallback triggered. |
-| **Multiple Faces**    | 🟢 **90%**   | Configurable face-index targeting (Sort by area).                |
+| Metric | 🔥 GPU Pipeline (High-Fidelity) | 💨 CPU Pipeline (Optimized) |
+| :--- | :--- | :--- |
+| **Primary Platform** | Workstations / Compute Servers | Consumer Laptops / Prototyping |
+| **Max Target Resolution** | **Original / 1080p / 4K** | **720p (Adaptive Downscale)** |
+| **Enc. Audio MUX Bitrate** | 12 Mbps (High Fidelity) | 6 Mbps (Web-Optimized) |
+| **Edge Blending Mode** | **Poisson (SeamlessClone)** | **Direct Feathered Alpha-Paste** |
+| **Face Detection Loop** | Frame-by-Frame Precision | KCF Tracker (1-in-10 detection) |
+| **Execution Performance** | ~40 seconds (10s video @ 30fps) | ~110 seconds (10s video @ 30fps) |
 
 ---
 
-## 📂 Developer Guide: Project Architecture
+## 🔍 Validation & Realism Constraints
 
-For step-by-step setup instructions and a guide on running the backend and dashboard services, please check the [Getting Started Guide](docs/guide.md).
+To set realistic expectations, we track and report edge cases where face transformation fidelity may drift:
 
-### Directory Navigation
-
-- **`pipelines/`**: Routing logic for `pipeline_gpu.py` (CUDA) and `pipeline_cpu.py` (CPU).
-- **`config/`**: Centralized tuning via `config_cpu.py` and `config_gpu.py`.
-- **`models/`**: `model_manager.py` handles model lifecycle, checksums, and auto-downloads.
-- **`utils/`**: Shared factory for `tracker_factory.py` (KCF vs. GPU selection).
-
-> [!IMPORTANT]
-> **Performance Tip**: If the processing is too slow on your CPU, adjust `PROCESS_EVERY_N_FRAMES` in `config/config_cpu.py` to `4` or `6` to prioritize speed over smoothness.
+| Scenario | Success Rate | System Pipeline Behavior |
+| :--- | :--- | :--- |
+| **Centric Face Orientation** | 🟢 **99%** | Perfect alignment, facial landmark match, and edge blending. |
+| **Extreme Profile Angle** | 🟡 **70%** | Identity drifts if landmarks or eye vertices are occluded. |
+| **Low-Light / Film Grain** | 🟡 **75%** | Minor boundary seams may become visible during Poisson cloning. |
+| **Rapid Head Motion** | 🔴 **60%** | KCF tracker fallback triggers full InsightFace redetection. |
+| **Multi-Face Crowd Scenes** | 🟢 **90%** | Configurable target selection indices (ordered by face area size). |
 
 ---
 
-## ⚙️ Configurability & Parameters
+## 🎛️ Slide Presentation Generator
 
-PersonaForge allows fine-tuned control over the processing engine via `config/` profiles.
+The codebase includes an automated presentation slide generator utilizing Playwright. This tool compiles our CSS slide design template into 11 premium vertical presentation slides (designed at 1080x1350, exported at 4K-density 2160x2700 for maximum clarity).
+
+### To render the presentation:
+1. Initialize the virtual environment and install Playwright requirements (see [docs/guide.md](docs/guide.md)).
+2. Execute the python generator script:
+   ```bash
+   python scripts/generate_carousel.py
+   ```
+3. Find the rendered slides in the `outputs/carousel/` directory.
+
+---
+
+## 📂 Project Architecture
+
+- **`pipelines/`**: Contains execution scripts `pipeline_gpu.py` (CUDA) and `pipeline_cpu.py` (CPU).
+- **`config/`**: Central parameter profiles `config_cpu.py` and `config_gpu.py`.
+- **`models/`**: `model_manager.py` handles model checks, folder creation, and auto-downloads.
+- **`utils/`**: Shared functions including the correlation tracking factory `tracker_factory.py`.
+- **`scripts/`**: Automation tools like `generate_carousel.py` for rendering social media carousel decks.
+
+---
+
+## ⚙️ Tuning Configurations
+
+Fine-tune execution variables inside `config/` profiles:
 
 ```python
-# config_cpu.py highlights
-PROCESS_EVERY_N_FRAMES = 3   # Skip frames for speed
-TARGET_HEIGHT = 720          # Force downscale for throughput
-DET_SIZE = (320, 320)        # Faster detection resolution
+# config_cpu.py parameters
+PROCESS_EVERY_N_FRAMES = 3   # Skip detection frames for performance
+TARGET_HEIGHT = 720          # Downscale input target resolution
+DET_SIZE = (320, 320)        # Bound detector inference size
 
-# config_gpu.py highlights
-USE_SEAMLESS_CLONE = True    # High-quality Poisson blending
-BITRATE = "12M"              # Cinematic compression standard
+# config_gpu.py parameters
+USE_SEAMLESS_CLONE = True    # Enable high-fidelity Poisson cloning
+BITRATE = "12M"              # Render export bitrate
 ```
 
 ---
 
-## 🚀 The Future: Scalability & Vision
+## 👤 Author & Contact
 
-PersonaForge is designed with a modular core that prepares it for next-generation expansion.
+<br>
 
-1.  **Cloud-SaaS Extraction**: The current `JobDB` (SQLite) and `pipelines/` are ready to be containerized into microservices (Docker/Kubernetes).
-2.  **Real-Time Injection**: Future versions aim to integrate **WebRTC** for real-time video face-swapping during live calls.
-3.  **Distributed Workers**: Moving from the current `process_semaphore` to a Redis-backed worker queue for multi-server processing.
+<p align="center">
+  <table align="center" style="border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; background: rgba(30, 41, 59, 0.4); backdrop-filter: blur(8px); padding: 20px; max-width: 500px; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);">
+    <tr>
+      <td align="center">
+        <h3 style="margin: 0; color: #38bdf8; font-size: 1.6em; font-weight: 800; letter-spacing: -0.5px;">Himanshu Jadhav</h3>
+        <p style="color: #94a3b8; font-weight: 500; margin: 4px 0 15px 0;">Artificial Intelligence & Data Science Engineer</p>
+        <p style="color: #cbd5e1; font-size: 0.95em; max-width: 400px; line-height: 1.5; margin-bottom: 20px;">
+          Passionate about computer vision, real-world localized model deployment, and high-performance pipeline architecture.
+        </p>
+        <div style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
+          <a href="https://github.com/himanshu-jadhav108" target="_blank"><img src="https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>
+          <a href="https://www.linkedin.com/in/himanshu-jadhav-328082339" target="_blank"><img src="https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn"></a>
+          <a href="https://himanshu-jadhav-portfolio.vercel.app/" target="_blank"><img src="https://img.shields.io/badge/Portfolio-FFD700?style=for-the-badge&logo=google-chrome&logoColor=black" alt="Portfolio"></a>
+          <a href="https://www.instagram.com/himanshu_jadhav_108" target="_blank"><img src="https://img.shields.io/badge/Instagram-E4405F?style=for-the-badge&logo=instagram&logoColor=white" alt="Instagram"></a>
+        </div>
+      </td>
+    </tr>
+  </table>
+</p>
+
+<br>
 
 ---
 
-## 👤 About the Author: Himanshu Jadhav
+## 💖 Acknowledgements
 
-PersonaForge AI is a solo project born from a desire to democratize high-fidelity AI by solving the **"GPU Tax"**. By engineering the adaptive CPU fallback, I proved that software architecture can bridge hardware gaps.
-
-[![GitHub](https://img.shields.io/badge/GitHub-himanshu--jadhav108-181717?style=for-the-badge&logo=github)](https://github.com/himanshu-jadhav108)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Himanshu%20Jadhav-0A66C2?style=for-the-badge&logo=linkedin)](https://www.linkedin.com/in/himanshu-jadhav-328082339)
-[![Instagram](https://img.shields.io/badge/Instagram-himanshu__jadhav__108-E4405F?style=for-the-badge&logo=instagram)](https://www.instagram.com/himanshu_jadhav_108)
-[![Portfolio](https://img.shields.io/badge/Portfolio-Visit%20Now-F7B731?style=for-the-badge&logo=vercel)](https://himanshu-jadhav-portfolio.vercel.app/)
+- [InsightFace](https://github.com/deepinsight/insightface) for state-of-the-art 2D and 3D face analysis.
+- [ONNX Runtime](https://onnxruntime.ai/) for high-performance localized neural network inference.
+- [FastAPI Framework](https://fastapi.tiangolo.com/) for serving our local endpoints.
+- [FFmpeg](https://ffmpeg.org/) for specialized video stream demuxing and encoding.
+- [OpenCV](https://opencv.org/) for pixel-level frame manipulation and correlation tracking.
+- The open-source computer vision community.
 
 ---
 
