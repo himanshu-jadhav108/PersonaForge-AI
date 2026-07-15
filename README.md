@@ -15,15 +15,15 @@
 
 ---
 
+## 📖 Getting Started
+
+To set up the prerequisites, run the FastAPI server or the Streamlit analytics dashboard, and benchmark the pipeline, please refer to the detailed [PersonaForge AI Getting Started Guide](docs/guide.md).
+
+---
+
 ## 📽️ Transformation Showcase
 
-![Demo - Personaforge](static/assets/DEMO%20-%20Personaforge.gif)
-
-### 🖼️ Result Gallery
-
-|             Cinematic Rendering             |               Original & Swap               |             Detail Preservation             |
-| :-----------------------------------------: | :-----------------------------------------: | :-----------------------------------------: |
-| ![Preview 01](static/assets/Preview_01.png) | ![Preview 02](static/assets/Preview_02.png) | ![Preview 03](static/assets/Preview_03.png) |
+![Demo - Personaforge](static/assets/Before_After_GIF.gif)
 
 ---
 
@@ -149,6 +149,8 @@ To ensure technical trust, we acknowledge the current physical limits of the ide
 ---
 
 ## 📂 Developer Guide: Project Architecture
+
+For step-by-step setup instructions and a guide on running the backend and dashboard services, please check the [Getting Started Guide](docs/guide.md).
 
 ### Directory Navigation
 
