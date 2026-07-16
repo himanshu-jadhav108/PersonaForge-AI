@@ -11,6 +11,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Local%20Endpoint-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Status](https://img.shields.io/badge/Status-Project%20Complete-2EA043?style=for-the-badge)](https://github.com/himanshu-jadhav108/PersonaForge-AI)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
+![GitHub release](https://img.shields.io/github/v/release/himanshu-jadhav108/PersonaForge-AI?style=for-the-badge)
 
 </div>
 
