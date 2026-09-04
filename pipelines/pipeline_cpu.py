@@ -134,6 +134,12 @@ def process_video_cpu(
             if not ret:
                 break
 
+            if db_manager and job_id and (i % 5 == 0):
+                cur_job = db_manager.get_job(job_id)
+                if cur_job and cur_job.get("status") == "cancelled":
+                    logger.info("[CPU] Job %s cancelled. Halting at frame %d/%d.", job_id[:8], i, total)
+                    break
+
             # ── Frame skipping: reuse last result for skipped frames ───────────
             if i > 0 and (i % cfg.PROCESS_EVERY_N_FRAMES != 0):
                 if last_result is not None:

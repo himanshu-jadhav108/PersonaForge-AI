@@ -47,6 +47,7 @@ from backend.app.quality.dashboard import generate_dashboard as quality_generate
 from backend.app.selection.models import SelectionMode, MediaAnalysisResponse
 from backend.app.selection.engine import SmartFaceSelector
 from backend.app.selection.dashboard import generate_dashboard as selection_generate_dashboard
+from backend.app.models.restoration.factory import RestorationFactory
 from backend.app.analytics.router import router as analytics_router
 from backend.app.realtime.router import router as realtime_router
 
@@ -320,6 +321,7 @@ async def preview_faceswap(
     target_face_id: Optional[str] = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
     duration:   float = Query(4.0, description="Preview duration in seconds"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
+    restoration: Optional[str] = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
 ):
     session_dir, img_path, vid_path = _resolve_session(session_id)
     job_id = _new_job(session_id, "preview")
@@ -332,8 +334,9 @@ async def preview_faceswap(
         target_face_id=target_face_id,
         preview_seconds=duration,
         resize_mode=resize_mode,
+        restoration=restoration,
     )
-    logger.info("Preview job %s queued for session %s (target=%s)", job_id, session_id, target_face_id or face_index)
+    logger.info("Preview job %s queued for session %s (target=%s, restoration=%s)", job_id, session_id, target_face_id or face_index, restoration)
     return JSONResponse({"job_id": job_id, "message": "Preview started. Poll /status/{job_id}."})
 
 
@@ -345,6 +348,7 @@ async def process_faceswap(
     face_index: int = Query(-1),
     target_face_id: Optional[str] = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
+    restoration: Optional[str] = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
 ):
     session_dir, img_path, vid_path = _resolve_session(session_id)
     job_id = _new_job(session_id, "full")
@@ -357,9 +361,36 @@ async def process_faceswap(
         target_face_id=target_face_id,
         preview_seconds=None,
         resize_mode=resize_mode,
+        restoration=restoration,
     )
-    logger.info("Full job %s queued for session %s (target=%s)", job_id, session_id, target_face_id or face_index)
+    logger.info("Full job %s queued for session %s (target=%s, restoration=%s)", job_id, session_id, target_face_id or face_index, restoration)
     return JSONResponse({"job_id": job_id, "message": "Processing started. Poll /status/{job_id}."})
+
+
+@app.post("/cancel/{job_id}", summary="Cancel an in-progress or queued job")
+async def cancel_job(job_id: str):
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    status = job.get("status")
+    if status in ("done", "error", "cancelled"):
+        return JSONResponse({"status": status, "message": f"Job is already {status}."})
+
+    db.update_job(job_id, {
+        "status": "cancelled",
+        "stage": "cancelled",
+        "message": "Job cancelled by user.",
+    })
+    logger.info("Job %s marked as cancelled by user request.", job_id[:8])
+    return JSONResponse({"status": "cancelled", "job_id": job_id, "message": "Job cancellation initiated."})
+
+
+@app.get("/restoration/status", summary="Check face restoration availability and transparency report")
+async def get_restoration_status(
+    adapter: str = Query("gfpgan", description="Restoration adapter: gfpgan, codeformer, classic, none"),
+):
+    _, status = RestorationFactory.create_restorer(name=adapter, fallback_to_classic=True)
+    return JSONResponse(status)
 
 
 @app.get("/status/{job_id}", summary="Poll job progress")
@@ -624,6 +655,7 @@ async def _run_pipeline(
     target_face_id:  Optional[str] = None,
     preview_seconds: Optional[float] = None,
     resize_mode:     str = "maintain",
+    restoration:     Optional[str] = "none",
 ):
     """
     Unified preview + full processing pipeline.
@@ -651,11 +683,16 @@ async def _run_pipeline(
             device  = swapper.get_execution_provider()
             mode    = swapper.get_mode()   # 'gpu' | 'cpu'
             
-            db.update_job(job_id, {
+            db_updates = {
                 "device": device,
                 "mode": mode,
-                "resize_mode": resize_mode
-            })
+                "resize_mode": resize_mode,
+            }
+            if restoration and restoration != "none":
+                _, restorer_status = RestorationFactory.create_restorer(name=restoration, fallback_to_classic=True)
+                db_updates["restoration"] = restoration
+                db_updates["restoration_status"] = restorer_status.get("status_message")
+            db.update_job(job_id, db_updates)
             upd("processing", 10, f"Using {device} pipeline.", device=device)
 
             # ── CPU override: allow up to 720p + 3M, but still slower than GPU ───
@@ -774,6 +811,12 @@ async def _run_pipeline(
                     target_embedding=target_embedding,
                 ),
             )
+
+            cur_job = db.get_job(job_id)
+            if cur_job and cur_job.get("status") == "cancelled":
+                logger.info("[%s] Pipeline execution halted: job was cancelled.", job_id[:8])
+                return
+
             upd("rendering", 80, f"Swap complete ({swapped} swapped).")
 
             if swapped == 0:

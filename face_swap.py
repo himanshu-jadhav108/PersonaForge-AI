@@ -387,6 +387,12 @@ class FaceSwapper:
                 if not ret:
                     break
 
+                if db_manager and job_id and (i % 5 == 0):
+                    cur_job = db_manager.get_job(job_id)
+                    if cur_job and cur_job.get("status") == "cancelled":
+                        logger.info("[GPU] Job %s cancelled. Halting at frame %d/%d.", job_id[:8], i, total)
+                        break
+
                 h, w = frame.shape[:2]
                 face_found = False
 
