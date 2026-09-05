@@ -1,13 +1,15 @@
-from fastapi import APIRouter, HTTPException
 import json
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query, Request
 
 try:
     import psutil
 except ImportError:
     psutil = None
 
+from backend.app.analytics.mode_benchmark import ModeBenchmarkEngine
 from utils.database import JobDB
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -16,9 +18,10 @@ db = JobDB()
 # Directory where reports are saved
 OUTPUTS_DIR = Path("outputs")
 REPORTS_DIR = OUTPUTS_DIR / "reports"
+UPLOADS_DIR = Path("uploads")
 
 @router.get("/overview")
-async def get_overview() -> Dict[str, Any]:
+async def get_overview() -> dict[str, Any]:
     jobs = db.get_recent_jobs(limit=1000) # get all or up to 1000 for overview
     total = len(jobs)
     
@@ -45,7 +48,7 @@ async def get_overview() -> Dict[str, Any]:
     }
 
 @router.get("/performance")
-async def get_performance() -> Dict[str, Any]:
+async def get_performance() -> dict[str, Any]:
     jobs = db.get_recent_jobs(limit=50) # last 50
     # sort chronologically
     jobs = sorted(jobs, key=lambda x: x.get("created_at", ""))
@@ -68,7 +71,7 @@ async def get_performance() -> Dict[str, Any]:
     }
 
 @router.get("/system")
-async def get_system_health() -> Dict[str, Any]:
+async def get_system_health() -> dict[str, Any]:
     if psutil is not None:
         cpu_percent = psutil.cpu_percent(interval=0.1)
         mem = psutil.virtual_memory()
@@ -94,20 +97,61 @@ async def get_system_health() -> Dict[str, Any]:
     }
 
 @router.get("/identity")
-async def get_identity_trends() -> Dict[str, Any]:
+async def get_identity_trends() -> dict[str, Any]:
     reports = list(REPORTS_DIR.glob("identity_report_*.json"))
     
     trends = []
-    for r in reports[:20]: # last 20
+    for r in reports[:20]:  # last 20
         try:
-            with open(r, 'r') as f:
-                data = json.load(f)
-                trends.append({
-                    "job_id": r.stem.replace("identity_report_", "")[:8],
-                    "score": data.get("identity_score", 0),
-                    "drift_detected": data.get("drift_detected", False)
-                })
-        except:
+            data = json.loads(r.read_text(encoding="utf-8"))
+            trends.append({
+                "job_id": r.stem.replace("identity_report_", "")[:8],
+                "score": data.get("identity_score", 0),
+                "drift_detected": data.get("drift_detected", False),
+            })
+        except Exception:
             continue
-            
+
     return {"trends": trends}
+
+
+@router.post("/benchmark/run", summary="Execute real measured processing mode benchmark on a sample clip")
+async def run_sample_benchmark(
+    request: Request,
+    session_id: str = Query(..., description="Session ID containing uploaded source and target media"),
+    sample_seconds: float = Query(3.5, ge=1.0, le=10.0, description="Sample duration in seconds"),
+) -> dict[str, Any]:
+    session_dir = UPLOADS_DIR / session_id
+    if not session_dir.exists():
+        raise HTTPException(404, f"Session '{session_id}' not found.")
+
+    imgs = list(session_dir.glob("source_face.*"))
+    vids = list(session_dir.glob("target_video.*"))
+    if not imgs or not vids:
+        raise HTTPException(400, "Session media missing source image or target video.")
+
+    swapper = getattr(request.app.state, "swapper", None)
+    if swapper is None:
+        raise HTTPException(503, "Swapper engine not initialized.")
+
+    try:
+        report = ModeBenchmarkEngine.run_sample_benchmark(
+            swapper=swapper,
+            img_path=str(imgs[0]),
+            vid_path=str(vids[0]),
+            session_id=session_id,
+            output_dir=OUTPUTS_DIR,
+            sample_seconds=sample_seconds,
+        )
+        return report.model_dump()
+    except Exception as e:
+        raise HTTPException(500, f"Benchmark execution failed: {e!s}") from e
+
+
+@router.get("/benchmark/{session_id}", summary="Get benchmark report for session")
+async def get_benchmark_report(session_id: str) -> dict[str, Any]:
+    report_path = REPORTS_DIR / f"benchmark_report_{session_id}.json"
+    if not report_path.exists():
+        raise HTTPException(404, f"Benchmark report for session '{session_id}' not found.")
+    return json.loads(report_path.read_text(encoding="utf-8"))
+
