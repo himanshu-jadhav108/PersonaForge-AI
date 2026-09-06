@@ -1,8 +1,11 @@
-import numpy as np
 import logging
+
+import numpy as np
+
 from backend.app.models.base import BaseSwapModel
 
 logger = logging.getLogger("personaforge.adapters.simswap")
+
 
 class SimSwapAdapter(BaseSwapModel):
     def __init__(self):

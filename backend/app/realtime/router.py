@@ -1,11 +1,12 @@
 import logging
-import json
 import os
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 try:
     from aiortc import RTCPeerConnection, RTCSessionDescription
+
     AIORTC_AVAILABLE = True
 except ImportError:
     AIORTC_AVAILABLE = False
@@ -13,8 +14,8 @@ except ImportError:
     RTCSessionDescription = None
 
 try:
-    from backend.app.realtime.webrtc import FaceSwapVideoStreamTrack
     from backend.app.realtime.stream_processor import RealTimeProcessor
+    from backend.app.realtime.webrtc import FaceSwapVideoStreamTrack
 except ImportError:
     FaceSwapVideoStreamTrack = None
     RealTimeProcessor = None
@@ -22,30 +23,37 @@ except ImportError:
 router = APIRouter(prefix="/realtime", tags=["Realtime"])
 logger = logging.getLogger("personaforge.realtime.router")
 
+
 class OfferSchema(BaseModel):
     sdp: str
     type: str
     source_image_path: str
     model_name: str = "inswapper_128.onnx"
 
+
 # Global references
 pcs = set()
 global_processor = None
+
 
 @router.on_event("shutdown")
 async def on_shutdown():
     if pcs:
         coros = [pc.close() for pc in pcs]
         import asyncio
+
         await asyncio.gather(*coros)
         pcs.clear()
+
 
 @router.post("/offer")
 async def offer(params: OfferSchema):
     if not AIORTC_AVAILABLE:
-        raise HTTPException(status_code=503, detail="WebRTC streaming is unavailable because 'aiortc' is not installed.")
+        raise HTTPException(
+            status_code=503, detail="WebRTC streaming is unavailable because 'aiortc' is not installed."
+        )
     global global_processor
-    
+
     if not os.path.exists(params.source_image_path):
         raise HTTPException(status_code=400, detail="Source image not found.")
 
@@ -54,7 +62,7 @@ async def offer(params: OfferSchema):
     pcs.add(pc)
 
     # Initialize Processor if needed
-    if global_processor is None or global_processor.swapper._app is None: # simplified logic
+    if global_processor is None or global_processor.swapper._app is None:  # simplified logic
         logger.info("Initializing RealTimeProcessor...")
         global_processor = RealTimeProcessor(params.source_image_path, params.model_name)
 
@@ -85,6 +93,7 @@ async def offer(params: OfferSchema):
     await pc.setLocalDescription(answer)
 
     return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+
 
 @router.get("/stats")
 async def get_stats():

@@ -40,10 +40,7 @@ class SeamlessCloneExperimental(BaseBlender):
         crop_h = y2 - y1
 
         # seamlessClone requires strict margins and valid dimensions
-        if (
-            x1 < 2 or y1 < 2 or x2 > fw - 2 or y2 > fh - 2
-            or crop_w <= 8 or crop_h <= 8
-        ):
+        if x1 < 2 or y1 < 2 or x2 > fw - 2 or y2 > fh - 2 or crop_w <= 8 or crop_h <= 8:
             return self._fallback.blend(frame, crop, x1, y1, x2, y2)
 
         if crop.shape[0] != crop_h or crop.shape[1] != crop_w:

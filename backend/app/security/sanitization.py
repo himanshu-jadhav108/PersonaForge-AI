@@ -130,7 +130,7 @@ def validate_file_security(
 
     if max_bytes is not None and size > max_bytes:
         limit_mb = max_bytes / (1024 * 1024)
-        return False, f"File size ({size / (1024*1024):.1f}MB) exceeds limit of {limit_mb:.0f}MB"
+        return False, f"File size ({size / (1024 * 1024):.1f}MB) exceeds limit of {limit_mb:.0f}MB"
 
     if not validate_media_magic_bytes(p, media_type):
         return False, f"Invalid {media_type} signature or unsupported binary header"

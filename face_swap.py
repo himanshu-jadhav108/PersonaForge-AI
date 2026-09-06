@@ -14,19 +14,18 @@ Features:
 
 import logging
 import time
-from pathlib import Path
+from enum import Enum
+
 import cv2
 import numpy as np
-from enum import Enum
-from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
-from models.model_manager import get_model_path, MODEL_CONFIG
-from utils.tracker_factory import make_tracker
+
 from backend.app.models.factory import ModelFactory
 from backend.app.tracking.factory import get_tracker
-from pipelines.blending.factory import get_blender
 from config import config_gpu as gpu_cfg
-from video_utils import get_video_info, get_ffmpeg_writer
+from models.model_manager import MODEL_CONFIG, get_model_path
+from pipelines.blending.factory import get_blender
+from utils.tracker_factory import make_tracker
+from video_utils import get_ffmpeg_writer, get_video_info
 
 logger = logging.getLogger("personaforge.face_swap")
 
@@ -35,20 +34,23 @@ _cuda_fallback_notified = False
 
 # ── Quality Mode ──────────────────────────────────────────────────────────────
 
+
 class QualityMode(str, Enum):
-    FAST     = "fast"
+    FAST = "fast"
     BALANCED = "balanced"
-    HIGH     = "high"
+    HIGH = "high"
+
 
 # ── Tuning Constants ──────────────────────────────────────────────────────────
-DETECT_EVERY_N_FRAMES = 5      # Full detection every N frames; track in between
-FACE_CROP_PADDING     = 0.35   # Padding around detected face bbox
+DETECT_EVERY_N_FRAMES = 5  # Full detection every N frames; track in between
+FACE_CROP_PADDING = 0.35  # Padding around detected face bbox
 
 # ── Custom Exception ──────────────────────────────────────────────────────────
 
+
 class FaceSwapError(Exception):
     """User-facing face swap failures."""
-    pass
+
 
 def _find_model(name: str) -> str:
     config_name = name.removesuffix(".onnx") if name.endswith(".onnx") else name
@@ -64,14 +66,18 @@ def _find_model(name: str) -> str:
         "and place it inside the models/ directory."
     )
 
+
 # ── Tracker Factory ───────────────────────────────────────────────────────────
+
 
 def _make_tracker():
     return make_tracker("GPU")
 
+
 # ────────────────────────────────────────────────────────────────────────────────
 # FaceSwapper
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 class FaceSwapper:
     """
@@ -88,10 +94,10 @@ class FaceSwapper:
     """
 
     def __init__(self, model_name: str = "inswapper_128.onnx", use_gpu: bool = True):
-        self._app       = None
+        self._app = None
         self._swap_adapter = None
         self._providers = ["CPUExecutionProvider"]
-        self._mode      = "cpu"   # set properly in _load()
+        self._mode = "cpu"  # set properly in _load()
         self._load(model_name, use_gpu)
 
     # ── Model Loading ──────────────────────────────────────────────────────────
@@ -99,23 +105,22 @@ class FaceSwapper:
     def _load(self, model_name: str, use_gpu: bool) -> None:
         global _cuda_fallback_notified
         try:
-            import insightface
             from insightface.app import FaceAnalysis
         except ImportError:
             raise ImportError("insightface not installed. Run: pip install insightface onnxruntime-gpu")
 
         try:
             import onnxruntime as ort
+
             available = ort.get_available_providers()
             logger.info("ONNX providers available: %s", available)
             if use_gpu and "CUDAExecutionProvider" in available:
                 providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
                 logger.info("GPU (CUDA) selected.")
             else:
-                if use_gpu:
-                    if not _cuda_fallback_notified:
-                        logger.info("CUDAExecutionProvider not found; falling back to CPU.")
-                        _cuda_fallback_notified = True
+                if use_gpu and not _cuda_fallback_notified:
+                    logger.info("CUDAExecutionProvider not found; falling back to CPU.")
+                    _cuda_fallback_notified = True
                 providers = ["CPUExecutionProvider"]
         except ImportError:
             providers = ["CPUExecutionProvider"]
@@ -123,11 +128,12 @@ class FaceSwapper:
         # ── Determine hardware mode ────────────────────────────────────────
         from config import config_cpu as _ccpu
         from config import config_gpu as _cgpu
+
         _is_gpu = "CUDAExecutionProvider" in providers
         self._mode = "gpu" if _is_gpu else "cpu"
         _cfg = _cgpu if _is_gpu else _ccpu
         _det_size = _cfg.DET_SIZE
-        _banner   = _cfg.STARTUP_MSG
+        _banner = _cfg.STARTUP_MSG
         logger.info("%s", _banner)
         print(f"\n  ✦ PersonaForge AI — {_banner}\n")
 
@@ -189,18 +195,18 @@ class FaceSwapper:
     def process_video_optimized(
         self,
         source_face,
-        video_path:  str,
-        output_path:  str,
-        quality:     "QualityMode" = None,
-        face_index:  int          = -1,
-        max_frames:  Optional[int] = None,
-        progress_start: int       = 36,
-        progress_end:   int       = 78,
-        db_manager                = None,
-        job_id:      str          = None,
-        identity_validator        = None,
-        bitrate:     Optional[str] = None,
-        target_embedding: Optional[np.ndarray] = None,
+        video_path: str,
+        output_path: str,
+        quality: "QualityMode" = None,
+        face_index: int = -1,
+        max_frames: int | None = None,
+        progress_start: int = 36,
+        progress_end: int = 78,
+        db_manager=None,
+        job_id: str | None = None,
+        identity_validator=None,
+        bitrate: str | None = None,
+        target_embedding: np.ndarray | None = None,
     ) -> tuple[int, int]:
         """
         Route to GPU or CPU pipeline based on detected hardware.
@@ -210,40 +216,42 @@ class FaceSwapper:
         """
         if self._mode == "gpu":
             from pipelines.pipeline_gpu import process_video_gpu
+
             return process_video_gpu(
-                swapper        = self,
-                source_face    = source_face,
-                video_path     = video_path,
-                output_path     = output_path,
-                quality        = quality if quality is not None else QualityMode.BALANCED,
-                face_index     = face_index,
-                max_frames     = max_frames,
-                progress_start = progress_start,
-                progress_end   = progress_end,
-                db_manager     = db_manager,
-                job_id         = job_id,
-                identity_validator = identity_validator,
-                bitrate        = bitrate,
-                target_embedding = target_embedding,
+                swapper=self,
+                source_face=source_face,
+                video_path=video_path,
+                output_path=output_path,
+                quality=quality if quality is not None else QualityMode.BALANCED,
+                face_index=face_index,
+                max_frames=max_frames,
+                progress_start=progress_start,
+                progress_end=progress_end,
+                db_manager=db_manager,
+                job_id=job_id,
+                identity_validator=identity_validator,
+                bitrate=bitrate,
+                target_embedding=target_embedding,
             )
         else:
             from pipelines.pipeline_cpu import process_video_cpu
+
             return process_video_cpu(
-                swapper_app    = self._app,
-                swap_adapter   = self._swap_adapter,
-                source_face    = source_face,
-                video_path     = video_path,
-                output_path     = output_path,
-                face_index     = face_index,
-                max_frames     = max_frames,
-                progress_start = progress_start,
-                progress_end   = progress_end,
-                db_manager     = db_manager,
-                job_id         = job_id,
-                identity_validator = identity_validator,
-                bitrate        = bitrate,
-                quality        = quality,
-                target_embedding = target_embedding,
+                swapper_app=self._app,
+                swap_adapter=self._swap_adapter,
+                source_face=source_face,
+                video_path=video_path,
+                output_path=output_path,
+                face_index=face_index,
+                max_frames=max_frames,
+                progress_start=progress_start,
+                progress_end=progress_end,
+                db_manager=db_manager,
+                job_id=job_id,
+                identity_validator=identity_validator,
+                bitrate=bitrate,
+                quality=quality,
+                target_embedding=target_embedding,
             )
 
     # ── Source Face ────────────────────────────────────────────────────────────
@@ -277,9 +285,8 @@ class FaceSwapper:
         target = max(faces, key=lambda f: _bbox_area(f.bbox))
         try:
             src_emb = np.array(source_face.embedding, dtype=np.float32)
-            tgt_emb = np.array(target.embedding,      dtype=np.float32)
-            score = float(np.dot(src_emb, tgt_emb) /
-                          (np.linalg.norm(src_emb) * np.linalg.norm(tgt_emb) + 1e-9))
+            tgt_emb = np.array(target.embedding, dtype=np.float32)
+            score = float(np.dot(src_emb, tgt_emb) / (np.linalg.norm(src_emb) * np.linalg.norm(tgt_emb) + 1e-9))
             logger.info("Face similarity score: %.3f", score)
             return score
         except Exception as e:
@@ -298,9 +305,8 @@ class FaceSwapper:
         target = max(faces, key=lambda f: _bbox_area(f.bbox))
         try:
             src_emb = np.array(source_face.embedding, dtype=np.float32)
-            tgt_emb = np.array(target.embedding,      dtype=np.float32)
-            score = float(np.dot(src_emb, tgt_emb) /
-                          (np.linalg.norm(src_emb) * np.linalg.norm(tgt_emb) + 1e-9))
+            tgt_emb = np.array(target.embedding, dtype=np.float32)
+            score = float(np.dot(src_emb, tgt_emb) / (np.linalg.norm(src_emb) * np.linalg.norm(tgt_emb) + 1e-9))
             logger.info("Face similarity score: %.3f", score)
             return score
         except Exception as e:
@@ -312,18 +318,18 @@ class FaceSwapper:
     def process_video(
         self,
         source_face,
-        video_path:  str,
+        video_path: str,
         output_path: str,
-        quality:     QualityMode = QualityMode.BALANCED,
-        face_index:  int         = -1,   # -1 = all faces
-        max_frames:  Optional[int] = None,  # None = all; N = preview mode
-        progress_start: int      = 36,
-        progress_end:   int      = 78,
-        db_manager                = None,
-        job_id:      str         = None,
-        identity_validator       = None,
-        bitrate:     Optional[str] = None,
-        target_embedding: Optional[np.ndarray] = None,
+        quality: QualityMode = QualityMode.BALANCED,
+        face_index: int = -1,  # -1 = all faces
+        max_frames: int | None = None,  # None = all; N = preview mode
+        progress_start: int = 36,
+        progress_end: int = 78,
+        db_manager=None,
+        job_id: str | None = None,
+        identity_validator=None,
+        bitrate: str | None = None,
+        target_embedding: np.ndarray | None = None,
     ) -> tuple[int, int]:
         """
         Core processing loop.
@@ -337,15 +343,17 @@ class FaceSwapper:
 
         if total == 0:
             raise RuntimeError(f"Could not read video info for '{video_path}'")
-            
+
         if max_frames is not None:
             total = min(total, max_frames)
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video '{video_path}'")
-            
-        chosen_bitrate = bitrate or ("2M" if quality == QualityMode.FAST else ("12M" if quality == QualityMode.HIGH else "6M"))
+
+        chosen_bitrate = bitrate or (
+            "2M" if quality == QualityMode.FAST else ("12M" if quality == QualityMode.HIGH else "6M")
+        )
         writer = get_ffmpeg_writer(
             output_path=output_path,
             fps=fps,
@@ -356,8 +364,8 @@ class FaceSwapper:
             is_preview=(max_frames is not None),
         )
 
-        swapped  = skipped = 0
-        tracker  = None
+        swapped = skipped = 0
+        tracker = None
         tracked_bbox = None
         t_start = time.perf_counter()
         last_progress_time = 0.0
@@ -372,7 +380,9 @@ class FaceSwapper:
             detect_interval = 10
             tracker_type = "kcf"
         elif quality == QualityMode.HIGH:
-            blender_type = "seamless_clone_experimental" if getattr(gpu_cfg, "USE_SEAMLESS_CLONE", False) else "feathered"
+            blender_type = (
+                "seamless_clone_experimental" if getattr(gpu_cfg, "USE_SEAMLESS_CLONE", False) else "feathered"
+            )
             blender = get_blender(blender_type)
             detect_interval = 2
             tracker_type = "kcf"
@@ -403,25 +413,25 @@ class FaceSwapper:
                     ok, bbox = tracker.update(frame)
                     if ok:
                         tracked_bbox = tuple(int(v) for v in bbox)
-                        face_found   = True
+                        face_found = True
                     else:
-                        tracker       = None
+                        tracker = None
                         run_detection = True
 
                 if run_detection:
                     all_faces = self._app.get(frame)
                     if all_faces:
                         all_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
-                        best  = all_faces[0]
+                        best = all_faces[0]
                         x1, y1, x2, y2 = [int(v) for v in best.bbox[:4]]
                         bw, bh = x2 - x1, y2 - y1
                         tracked_bbox = (x1, y1, bw, bh)
-                        face_found   = True
-                        tracker      = get_tracker(tracker_type)
+                        face_found = True
+                        tracker = get_tracker(tracker_type)
                         if tracker is not None:
                             tracker.init(frame, tracked_bbox)
                     else:
-                        tracker      = None
+                        tracker = None
                         tracked_bbox = None
 
                 # ── Crop-based Swap ────────────────────────────────────────────
@@ -444,7 +454,7 @@ class FaceSwapper:
                             target_norm = float(np.linalg.norm(target_embedding))
                             if target_norm > 0:
                                 for cf in crop_faces:
-                                    cf_emb = getattr(cf, 'embedding', None)
+                                    cf_emb = getattr(cf, "embedding", None)
                                     if cf_emb is not None:
                                         cf_emb_arr = np.array(cf_emb, dtype=np.float32).flatten()
                                         cf_norm = float(np.linalg.norm(cf_emb_arr))
@@ -460,19 +470,21 @@ class FaceSwapper:
                             targets = crop_faces
 
                         result_crop = crop.copy()
-                        did_swap    = False
+                        did_swap = False
                         for tf in targets:
                             try:
                                 result_crop = self._swap_adapter.swap_face(result_crop, tf, source_face)
-                                did_swap    = True
+                                did_swap = True
                             except Exception as e:
                                 logger.debug("Swap on crop failed: %s", e)
 
                         if did_swap:
                             result_crop = _enhance_crop(result_crop, quality)
-                            result = _blend_crop(frame, result_crop, x1c, y1c, x2c, y2c, quality=quality, blender=blender)
+                            result = _blend_crop(
+                                frame, result_crop, x1c, y1c, x2c, y2c, quality=quality, blender=blender
+                            )
                             swapped += 1
-                            
+
                             # Periodic identity validation avoids redundant FaceAnalysis passes
                             if identity_validator and (i % val_freq == 0 or i == total - 1):
                                 swapped_faces = self._app.get(result_crop)
@@ -480,15 +492,17 @@ class FaceSwapper:
                                     swapped_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
                                     swapped_face = swapped_faces[0]
                                     timestamp = float(i) / max(1.0, fps)
-                                    identity_validator.add_record(i, timestamp, source_face.embedding, swapped_face.embedding)
+                                    identity_validator.add_record(
+                                        i, timestamp, source_face.embedding, swapped_face.embedding
+                                    )
                         else:
                             result = frame
                             skipped += 1
                     else:
-                        result  = frame
+                        result = frame
                         skipped += 1
                 else:
-                    result  = frame
+                    result = frame
                     skipped += 1
 
                 # ── Direct Pipe Write ──────────────────────────────────────────
@@ -498,14 +512,17 @@ class FaceSwapper:
                 if db_manager is not None and job_id is not None:
                     now = time.monotonic()
                     span = progress_end - progress_start
-                    pct  = progress_start + int((i + 1) / total * span)
+                    pct = progress_start + int((i + 1) / total * span)
                     if (now - last_progress_time >= 0.5) or (pct != last_progress_pct) or (i == total - 1):
                         last_progress_time = now
                         last_progress_pct = pct
-                        db_manager.update_job(job_id, {
-                            "progress": pct,
-                            "message": f"Frame {i+1}/{total} — swapped={swapped}, skipped={skipped}"
-                        })
+                        db_manager.update_job(
+                            job_id,
+                            {
+                                "progress": pct,
+                                "message": f"Frame {i + 1}/{total} — swapped={swapped}, skipped={skipped}",
+                            },
+                        )
 
         finally:
             cap.release()
@@ -524,12 +541,16 @@ class FaceSwapper:
         fps_out = total / elapsed if elapsed > 0 else 0
         logger.info(
             "Processing done in %.1fs → %.1f fps | swapped=%d skipped=%d",
-            elapsed, fps_out, swapped, skipped,
+            elapsed,
+            fps_out,
+            swapped,
+            skipped,
         )
         return swapped, skipped
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _bbox_area(bbox) -> float:
     x1, y1, x2, y2 = bbox[:4]
@@ -558,8 +579,8 @@ def _blend_crop(
     y1: int,
     x2: int,
     y2: int,
-    quality: Optional[QualityMode] = None,
-    blender = None,
+    quality: QualityMode | None = None,
+    blender=None,
 ) -> np.ndarray:
     """
     Blend the swapped crop back into the frame using the configured blender.

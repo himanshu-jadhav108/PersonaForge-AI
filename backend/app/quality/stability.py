@@ -10,8 +10,8 @@ class LandmarkStabilityEvaluator:
     """
 
     JITTER_SPIKE_THRESHOLD_IOD: float = 0.18  # Displacements > 0.18 IOD indicate snap/jitter
-    MAX_EXPECTED_JITTER_IOD: float = 0.20     # Normalization scale ceiling for score calculation
-    SCENE_CUT_THRESHOLD_IOD: float = 1.00     # Displacements > 1.0 IOD represent scene cuts/resets
+    MAX_EXPECTED_JITTER_IOD: float = 0.20  # Normalization scale ceiling for score calculation
+    SCENE_CUT_THRESHOLD_IOD: float = 1.00  # Displacements > 1.0 IOD represent scene cuts/resets
 
     @staticmethod
     def compute_iod(landmarks: np.ndarray) -> float:

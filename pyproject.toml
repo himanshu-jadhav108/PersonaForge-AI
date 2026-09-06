@@ -1,0 +1,55 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "uploads",
+    "outputs",
+    "temp_frames",
+    "scratch",
+    ".system_generated",
+    ".test_tmp",
+    "tests/.test_tmp",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific rules
+    "C4",  # flake8-comprehensions
+]
+ignore = [
+    "E501",   # line length handled by black/formatter
+    "B008",   # do not perform function calls in argument defaults (standard for FastAPI Depends/Query/File)
+    "B904",   # within an except clause, raise exceptions with from err
+    "SIM105", # use contextlib.suppress instead of try-except-pass
+    "UP007",  # use X | Y for type annotations
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",
+    "S110",
+    "F401",
+    "RUF059",
+    "SIM117",
+    "BLE001",
+]
+"scripts/*" = [
+    "BLE001",
+    "F401",
+    "T201",
+]
+"dashboard_app.py" = [
+    "BLE001",
+]

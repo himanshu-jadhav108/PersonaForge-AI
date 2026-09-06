@@ -11,7 +11,7 @@ class LaplacianBlurDetector:
     specified in docs/metrics.md.
     """
 
-    SIGMA_MIN_SQ: float = 25.0    # Unusable blur baseline
+    SIGMA_MIN_SQ: float = 25.0  # Unusable blur baseline
     SIGMA_TARGET_SQ: float = 300.0  # Standard high-definition edge sharpness target
 
     @staticmethod
@@ -22,10 +22,7 @@ class LaplacianBlurDetector:
         if image is None or image.size == 0:
             return 0.0
 
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
 
         var = cv2.Laplacian(gray, cv2.CV_64F).var()
         return round(float(var), 2)

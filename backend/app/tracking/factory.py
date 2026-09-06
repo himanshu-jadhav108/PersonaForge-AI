@@ -2,7 +2,6 @@
 factory.py — Tracker factory for obtaining face tracker instances.
 """
 
-
 from backend.app.tracking.base import BaseFaceTracker
 from backend.app.tracking.detection_tracker import DetectionOnlyTracker
 from backend.app.tracking.kcf_tracker import KCFTracker

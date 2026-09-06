@@ -2,7 +2,6 @@
 detection_tracker.py — Detection-only face tracker (periodic / per-frame detection).
 """
 
-
 import numpy as np
 
 from backend.app.tracking.base import BaseFaceTracker

@@ -1,6 +1,6 @@
-import os
 import asyncio
 from pathlib import Path
+
 
 async def main():
     try:
@@ -25,7 +25,7 @@ async def main():
         # Create context with 1080x1350 viewport (LinkedIn Portrait)
         context = await browser.new_context(
             viewport={"width": 1080, "height": 1350},
-            device_scale_factor=2 # Render at 2x scale factor for ultra-sharp high-DPI text (2160x2700)
+            device_scale_factor=2,  # Render at 2x scale factor for ultra-sharp high-DPI text (2160x2700)
         )
         page = await context.new_page()
 
@@ -45,16 +45,13 @@ async def main():
         for idx, slide in enumerate(slides, start=1):
             output_path = output_dir / f"slide_{idx}.png"
             print(f"Rendering slide {idx}/{len(slides)} -> {output_path.name}...")
-            
+
             # Capture the screenshot of the slide element
-            await slide.screenshot(
-                path=str(output_path),
-                type="png",
-                omit_background=False
-            )
+            await slide.screenshot(path=str(output_path), type="png", omit_background=False)
 
         await browser.close()
         print("\n=== Carousel generation complete! Slides saved to outputs/carousel/ ===")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

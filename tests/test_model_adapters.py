@@ -1,14 +1,14 @@
 import unittest
+
 import numpy as np
 
-from backend.app.models.factory import ModelFactory
+from backend.app.models.adapters.ghost import GhostAdapter
 from backend.app.models.adapters.inswapper import InSwapperAdapter
 from backend.app.models.adapters.simswap import SimSwapAdapter
-from backend.app.models.adapters.ghost import GhostAdapter
+from backend.app.models.factory import ModelFactory
 
 
 class TestModelAdapters(unittest.TestCase):
-
     def test_model_factory_returns_correct_adapters(self):
         inswapper = ModelFactory.get_model("inswapper_128.onnx")
         self.assertIsInstance(inswapper, InSwapperAdapter)
@@ -25,10 +25,10 @@ class TestModelAdapters(unittest.TestCase):
     def test_simswap_stub_raises_not_implemented(self):
         simswap = ModelFactory.get_model("simswap")
         simswap.load_model("dummy_path", ["CPUExecutionProvider"])
-        
+
         dummy_frame = np.zeros((100, 100, 3), dtype=np.uint8)
         dummy_frame[0, 0] = [255, 255, 255]
-        
+
         with self.assertRaises(NotImplementedError):
             simswap.swap_face(dummy_frame, "target_face", "source_face")
         simswap.cleanup()
@@ -36,10 +36,10 @@ class TestModelAdapters(unittest.TestCase):
     def test_ghost_stub_raises_not_implemented(self):
         ghost = ModelFactory.get_model("ghost")
         ghost.load_model("dummy_path", ["CPUExecutionProvider"])
-        
+
         dummy_frame = np.zeros((100, 100, 3), dtype=np.uint8)
         dummy_frame[0, 0] = [255, 255, 255]
-        
+
         with self.assertRaises(NotImplementedError):
             ghost.swap_face(dummy_frame, "target_face", "source_face")
         ghost.cleanup()

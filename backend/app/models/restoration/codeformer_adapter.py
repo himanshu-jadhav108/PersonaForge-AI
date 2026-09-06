@@ -35,6 +35,7 @@ class CodeFormerRestorer(BaseFaceRestorer):
         if self.model_path.exists():
             try:
                 import onnxruntime as ort
+
                 opts = ort.SessionOptions()
                 opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
                 self.session = ort.InferenceSession(
@@ -43,7 +44,7 @@ class CodeFormerRestorer(BaseFaceRestorer):
                     providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
                 )
                 logger.info("Loaded CodeFormer restoration model from %s", self.model_path)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning("Could not initialize CodeFormer session: %s", e)
                 self.session = None
         else:
@@ -92,7 +93,7 @@ class CodeFormerRestorer(BaseFaceRestorer):
                 return cv2.addWeighted(restored_bgr, weight, crop, 1.0 - weight, 0)
             return restored_bgr
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("CodeFormer inference error: %s. Falling back to input crop.", exc)
             return crop
 

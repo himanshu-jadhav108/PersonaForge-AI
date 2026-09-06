@@ -41,16 +41,18 @@ def test_restoration_status_endpoint():
 
 def test_cancel_job_lifecycle():
     job_id = uuid.uuid4().hex
-    db.insert_job({
-        "id": job_id,
-        "session_id": "test_session_id",
-        "kind": "full",
-        "status": "running",
-        "stage": "processing",
-        "progress": 45,
-        "message": "Processing frames...",
-        "created_at": "2026-09-04T12:00:00Z"
-    })
+    db.insert_job(
+        {
+            "id": job_id,
+            "session_id": "test_session_id",
+            "kind": "full",
+            "status": "running",
+            "stage": "processing",
+            "progress": 45,
+            "message": "Processing frames...",
+            "created_at": "2026-09-04T12:00:00Z",
+        }
+    )
 
     # Cancel active job
     res = client.post(f"/cancel/{job_id}")

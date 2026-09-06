@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
+
 import numpy as np
+
 
 class BaseSwapModel(ABC):
     """
@@ -10,7 +12,6 @@ class BaseSwapModel(ABC):
     @abstractmethod
     def load_model(self, model_path: str, providers: list[str]) -> None:
         """Loads the model into memory."""
-        pass
 
     @abstractmethod
     def swap_face(self, frame: np.ndarray, target_face, source_face) -> np.ndarray:
@@ -21,14 +22,11 @@ class BaseSwapModel(ABC):
         :param source_face: The extracted embedding/landmarks of the source identity.
         :return: The frame with the face swapped.
         """
-        pass
 
     @abstractmethod
     def validate_input(self, target_face, source_face) -> bool:
         """Validates if the provided face objects are compatible with this model."""
-        pass
 
     @abstractmethod
     def cleanup(self) -> None:
         """Frees model resources."""
-        pass

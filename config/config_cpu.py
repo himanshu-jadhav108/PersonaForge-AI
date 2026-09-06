@@ -11,9 +11,9 @@ import os
 # Adaptive: fewer cores → skip more frames.
 _cpu_cores = os.cpu_count() or 2
 if _cpu_cores <= 4:
-    PROCESS_EVERY_N_FRAMES: int = 4   # Process 1 in 4 frames
+    PROCESS_EVERY_N_FRAMES: int = 4  # Process 1 in 4 frames
 else:
-    PROCESS_EVERY_N_FRAMES: int = 3   # Process 1 in 3 frames
+    PROCESS_EVERY_N_FRAMES: int = 3  # Process 1 in 3 frames
 
 # Full face detection runs every N *processed* frames; KCF tracks between them.
 DETECT_EVERY: int = 10
@@ -26,7 +26,7 @@ TARGET_HEIGHT: int = 480
 DET_SIZE: tuple[int, int] = (320, 320)
 
 # ── Enhancement ───────────────────────────────────────────────────────────────
-ENHANCEMENT_ENABLED: bool = False   # Skip GFPGAN / bilateral / unsharp
+ENHANCEMENT_ENABLED: bool = False  # Skip GFPGAN / bilateral / unsharp
 
 # ── Encoding ──────────────────────────────────────────────────────────────────
 FFMPEG_PRESET: str = "ultrafast"

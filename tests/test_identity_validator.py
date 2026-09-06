@@ -89,7 +89,7 @@ def test_save_report(validator):
         assert report_path.name == "identity_report_test_job_123.json"
 
         # Verify JSON is parseable and valid
-        with open(report_path, "r", encoding="utf-8") as f:
+        with open(report_path, encoding="utf-8") as f:
             data = json.load(f)
             assert data["job_id"] == "test_job_123"
             assert data["drift_detected"] is False

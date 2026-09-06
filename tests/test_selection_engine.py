@@ -53,7 +53,7 @@ def selector(temp_out_dir):
 def sample_video_path(temp_out_dir):
     """Creates a tiny 1-second 30fps synthetic video for test execution."""
     vid_path = temp_out_dir / "test_sample.mp4"
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(str(vid_path), fourcc, 30.0, (640, 480))
     for i in range(30):
         frame = np.full((480, 640, 3), fill_value=int(50 + (i * 2)), dtype=np.uint8)
@@ -70,9 +70,24 @@ def test_cluster_faces(selector):
     emb2 = np.array([0.0, 1.0, 0.0])
 
     faces = [
-        {'frame_idx': 0, 'face': MockFace([0, 0, 50, 50], emb1, 0.9, None), 'crop': np.zeros((50, 50, 3)), 'bbox_area': 2500.0},
-        {'frame_idx': 1, 'face': MockFace([0, 0, 50, 50], emb1, 0.9, None), 'crop': np.zeros((50, 50, 3)), 'bbox_area': 2500.0},
-        {'frame_idx': 0, 'face': MockFace([0, 0, 30, 30], emb2, 0.8, None), 'crop': np.zeros((30, 30, 3)), 'bbox_area': 900.0},
+        {
+            "frame_idx": 0,
+            "face": MockFace([0, 0, 50, 50], emb1, 0.9, None),
+            "crop": np.zeros((50, 50, 3)),
+            "bbox_area": 2500.0,
+        },
+        {
+            "frame_idx": 1,
+            "face": MockFace([0, 0, 50, 50], emb1, 0.9, None),
+            "crop": np.zeros((50, 50, 3)),
+            "bbox_area": 2500.0,
+        },
+        {
+            "frame_idx": 0,
+            "face": MockFace([0, 0, 30, 30], emb2, 0.8, None),
+            "crop": np.zeros((30, 30, 3)),
+            "bbox_area": 900.0,
+        },
     ]
 
     clusters = selector.cluster_faces(faces, threshold=0.45)
@@ -87,24 +102,28 @@ def test_cluster_faces(selector):
 
 def test_calculate_frontal_score():
     # Symmetrical frontal landmarks: left_eye, right_eye, nose, left_mouth, right_mouth
-    kps_frontal = np.array([
-        [40.0, 40.0],   # left eye
-        [80.0, 40.0],   # right eye
-        [60.0, 60.0],   # nose perfectly centered at x=60
-        [45.0, 80.0],   # left mouth
-        [75.0, 80.0],   # right mouth
-    ])
+    kps_frontal = np.array(
+        [
+            [40.0, 40.0],  # left eye
+            [80.0, 40.0],  # right eye
+            [60.0, 60.0],  # nose perfectly centered at x=60
+            [45.0, 80.0],  # left mouth
+            [75.0, 80.0],  # right mouth
+        ]
+    )
     face_frontal = MockFace([20, 20, 100, 100], None, det_score=0.95, kps=kps_frontal)
     score_frontal = _calculate_frontal_score(face_frontal, bbox_area=6400.0)
 
     # Asymmetrical turned face: nose pushed to the right side
-    kps_turned = np.array([
-        [40.0, 40.0],
-        [80.0, 40.0],
-        [78.0, 60.0],   # nose close to right eye
-        [50.0, 80.0],
-        [80.0, 80.0],
-    ])
+    kps_turned = np.array(
+        [
+            [40.0, 40.0],
+            [80.0, 40.0],
+            [78.0, 60.0],  # nose close to right eye
+            [50.0, 80.0],
+            [80.0, 80.0],
+        ]
+    )
     face_turned = MockFace([20, 20, 100, 100], None, det_score=0.95, kps=kps_turned)
     score_turned = _calculate_frontal_score(face_turned, bbox_area=6400.0)
 
@@ -116,7 +135,7 @@ def test_calculate_mouth_variance(selector):
     f1 = MockFace([0, 0, 100, 100], None, 0.9, np.array([[20, 20], [80, 20], [50, 50], [30, 80], [70, 80]]))
     f2 = MockFace([0, 0, 100, 100], None, 0.9, np.array([[20, 20], [80, 20], [50, 50], [30, 90], [70, 90]]))
 
-    items = [{'face': f1}, {'face': f2}]
+    items = [{"face": f1}, {"face": f2}]
     var = selector._calculate_mouth_variance(items)
     assert var > 0.0
 
@@ -128,18 +147,18 @@ def test_calculate_profiles_and_thumbnails(selector, temp_out_dir):
 
     items = [
         {
-            'frame_idx': 0,
-            'face': MockFace([10, 10, 70, 70], emb1, 0.95),
-            'crop': crop_good,
-            'bbox_area': 3600.0,
-            'frontal_score': 92.0,
+            "frame_idx": 0,
+            "face": MockFace([10, 10, 70, 70], emb1, 0.95),
+            "crop": crop_good,
+            "bbox_area": 3600.0,
+            "frontal_score": 92.0,
         },
         {
-            'frame_idx': 1,
-            'face': MockFace([10, 10, 50, 50], emb1, 0.80),
-            'crop': crop_bad,
-            'bbox_area': 1600.0,
-            'frontal_score': 65.0,
+            "frame_idx": 1,
+            "face": MockFace([10, 10, 50, 50], emb1, 0.80),
+            "crop": crop_bad,
+            "bbox_area": 1600.0,
+            "frontal_score": 65.0,
         },
     ]
 
@@ -199,8 +218,15 @@ def test_rank_and_select(selector):
 def test_evaluate_warnings(selector):
     # Low resolution, dark frame, no faces
     meta_low = VideoMetadata(
-        duration=10.0, fps=30.0, total_frames=300, width=320, height=240,
-        orientation="landscape", aspect_ratio=1.3333, codec="h264", file_size_mb=1.2,
+        duration=10.0,
+        fps=30.0,
+        total_frames=300,
+        width=320,
+        height=240,
+        orientation="landscape",
+        aspect_ratio=1.3333,
+        codec="h264",
+        file_size_mb=1.2,
     )
     frame_stats = {"avg_luminance": 25.0, "avg_sharpness": 40.0, "sampled_frames_count": 10}
     warnings, _rec_mode = selector.evaluate_warnings(meta_low, frame_stats, [])

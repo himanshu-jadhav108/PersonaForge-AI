@@ -1,6 +1,7 @@
-import plotly.graph_objects as go
-from pathlib import Path
 import logging
+from pathlib import Path
+
+import plotly.graph_objects as go
 
 from backend.app.selection.models import SelectionReport
 
@@ -14,10 +15,7 @@ def generate_dashboard(report: SelectionReport, output_dir: Path, filename_prefi
     output_dir.mkdir(parents=True, exist_ok=True)
     chart_path = output_dir / f"selection_dashboard_{filename_prefix}.html"
 
-    labels = [
-        f"{getattr(p, 'person_label', 'Person')} ({p.face_id[:8]})"
-        for p in report.profiles
-    ]
+    labels = [f"{getattr(p, 'person_label', 'Person')} ({p.face_id[:8]})" for p in report.profiles]
 
     # Scale areas for better visualization
     max_area = max([p.average_area for p in report.profiles]) if report.profiles else 1.0
@@ -29,14 +27,16 @@ def generate_dashboard(report: SelectionReport, output_dir: Path, filename_prefi
     speaking_scores = [min(100.0, p.speaking_score) for p in report.profiles]
     confidences = [p.detection_confidence for p in report.profiles]
 
-    fig = go.Figure(data=[
-        go.Bar(name='Relative Area', x=labels, y=areas),
-        go.Bar(name='Visibility (%)', x=labels, y=visibilities),
-        go.Bar(name='Speaking Score (Scaled)', x=labels, y=speaking_scores),
-        go.Bar(name='Detection Confidence', x=labels, y=confidences),
-    ])
+    fig = go.Figure(
+        data=[
+            go.Bar(name="Relative Area", x=labels, y=areas),
+            go.Bar(name="Visibility (%)", x=labels, y=visibilities),
+            go.Bar(name="Speaking Score (Scaled)", x=labels, y=speaking_scores),
+            go.Bar(name="Detection Confidence", x=labels, y=confidences),
+        ]
+    )
 
-    fig.update_layout(barmode='group')
+    fig.update_layout(barmode="group")
 
     optimal_name = report.selected_person_label or report.selected_face_id[:8]
 

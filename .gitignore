@@ -17,6 +17,8 @@ ENV/
 temp_frames/
 uploads/
 outputs/
+.test_tmp/
+tests/.test_tmp/
 *.mp4
 
 

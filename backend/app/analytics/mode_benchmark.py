@@ -3,7 +3,7 @@ backend/app/analytics/mode_benchmark.py
 
 Real Processing Mode Benchmarking Engine for PersonaForge AI.
 Evaluates FAST, BALANCED, and HIGH processing modes on a user-selected
-3–5 second clip (non-simulated, real hardware execution).
+3-5 second clip (non-simulated, real hardware execution).
 
 Enforces Safeguard 7:
 - Real wall-clock and hardware measurements only.
@@ -78,6 +78,7 @@ class SampleBenchmarkReport(BaseModel):
 
 class MockJobDB:
     """Lightweight null database manager for benchmark runs."""
+
     def update_job(self, *args, **kwargs):
         pass
 
@@ -118,7 +119,10 @@ class ModeBenchmarkEngine:
 
         logger.info(
             "Starting Mode Benchmark for session %s: %d frames (%.1fs) on %s",
-            session_id[:8], sample_frames, sample_seconds, device,
+            session_id[:8],
+            sample_frames,
+            sample_seconds,
+            device,
         )
 
         source_face = swapper.get_source_face(img_path)
@@ -142,6 +146,7 @@ class ModeBenchmarkEngine:
             vram_start = 0.0
             try:
                 import GPUtil
+
                 gpus = GPUtil.getGPUs()
                 if gpus:
                     vram_start = float(gpus[0].memoryUsed)
@@ -173,6 +178,7 @@ class ModeBenchmarkEngine:
             vram_end = vram_start
             try:
                 import GPUtil
+
                 gpus = GPUtil.getGPUs()
                 if gpus:
                     vram_end = float(gpus[0].memoryUsed)
@@ -225,9 +231,7 @@ class ModeBenchmarkEngine:
             )
         else:
             rec_mode = "fast"
-            rec_reason = (
-                f"CPU pipeline throughput is {fast_fps:.1f} FPS. Fast mode is recommended to minimize processing latency."
-            )
+            rec_reason = f"CPU pipeline throughput is {fast_fps:.1f} FPS. Fast mode is recommended to minimize processing latency."
 
         report = SampleBenchmarkReport(
             benchmark_id=f"bench_{session_id[:8]}",

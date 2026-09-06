@@ -9,13 +9,12 @@ Tests that:
   5. video_utils.get_ffmpeg_writer() uses ultrafast preset in cpu_mode=True and is_preview=True
 """
 
-import sys
-import importlib
-import unittest
-from unittest.mock import patch, MagicMock, call
-
 # ── ensure project root is in path ─────────────────────────────────────────────
 import os
+import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
@@ -24,35 +23,33 @@ class TestConfigs(unittest.TestCase):
 
     def test_cpu_config_values(self):
         from config import config_cpu as cpu
-        self.assertGreater(cpu.PROCESS_EVERY_N_FRAMES, 1,
-            "CPU should skip frames")
-        self.assertGreater(cpu.DETECT_EVERY, 1,
-            "CPU should reduce detection frequency")
-        self.assertGreater(cpu.TARGET_HEIGHT, 0,
-            "CPU should downscale frames")
-        self.assertFalse(cpu.ENHANCEMENT_ENABLED,
-            "CPU should disable enhancement")
-        self.assertEqual(cpu.FFMPEG_PRESET, "ultrafast",
-            "CPU should use ultrafast FFmpeg preset")
-        print(f"  [OK] config_cpu: skip={cpu.PROCESS_EVERY_N_FRAMES}, "
-              f"detect_every={cpu.DETECT_EVERY}, height={cpu.TARGET_HEIGHT}p")
+
+        self.assertGreater(cpu.PROCESS_EVERY_N_FRAMES, 1, "CPU should skip frames")
+        self.assertGreater(cpu.DETECT_EVERY, 1, "CPU should reduce detection frequency")
+        self.assertGreater(cpu.TARGET_HEIGHT, 0, "CPU should downscale frames")
+        self.assertFalse(cpu.ENHANCEMENT_ENABLED, "CPU should disable enhancement")
+        self.assertEqual(cpu.FFMPEG_PRESET, "ultrafast", "CPU should use ultrafast FFmpeg preset")
+        print(
+            f"  [OK] config_cpu: skip={cpu.PROCESS_EVERY_N_FRAMES}, "
+            f"detect_every={cpu.DETECT_EVERY}, height={cpu.TARGET_HEIGHT}p"
+        )
 
     def test_gpu_config_values(self):
         from config import config_gpu as gpu
-        self.assertEqual(gpu.PROCESS_EVERY_N_FRAMES, 1,
-            "GPU should process every frame")
-        self.assertEqual(gpu.TARGET_HEIGHT, 0,
-            "GPU should use original resolution")
-        self.assertTrue(gpu.ENHANCEMENT_ENABLED,
-            "GPU should enable enhancement")
-        self.assertTrue(gpu.USE_SEAMLESS_CLONE,
-            "GPU should use seamlessClone")
-        print(f"  [OK] config_gpu: skip={gpu.PROCESS_EVERY_N_FRAMES}, "
-              f"height=original, enhancement={gpu.ENHANCEMENT_ENABLED}")
+
+        self.assertEqual(gpu.PROCESS_EVERY_N_FRAMES, 1, "GPU should process every frame")
+        self.assertEqual(gpu.TARGET_HEIGHT, 0, "GPU should use original resolution")
+        self.assertTrue(gpu.ENHANCEMENT_ENABLED, "GPU should enable enhancement")
+        self.assertTrue(gpu.USE_SEAMLESS_CLONE, "GPU should use seamlessClone")
+        print(
+            f"  [OK] config_gpu: skip={gpu.PROCESS_EVERY_N_FRAMES}, "
+            f"height=original, enhancement={gpu.ENHANCEMENT_ENABLED}"
+        )
 
     def test_configs_are_different(self):
         from config import config_cpu as cpu
         from config import config_gpu as gpu
+
         self.assertNotEqual(cpu.PROCESS_EVERY_N_FRAMES, gpu.PROCESS_EVERY_N_FRAMES)
         self.assertNotEqual(cpu.TARGET_HEIGHT, gpu.TARGET_HEIGHT)
         self.assertNotEqual(cpu.ENHANCEMENT_ENABLED, gpu.ENHANCEMENT_ENABLED)
@@ -65,31 +62,31 @@ class TestFaceSwapperMode(unittest.TestCase):
 
     def _make_mock_swapper(self, cuda_available: bool):
         """Patch insightface + onnxruntime and construct FaceSwapper."""
-        providers = (
-            ["CUDAExecutionProvider", "CPUExecutionProvider"] if cuda_available
-            else ["CPUExecutionProvider"]
-        )
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if cuda_available else ["CPUExecutionProvider"]
 
-        mock_app   = MagicMock()
+        mock_app = MagicMock()
         mock_model = MagicMock()
         mock_face_analysis = MagicMock(return_value=mock_app)
-        mock_ort   = MagicMock()
+        mock_ort = MagicMock()
         mock_ort.get_available_providers.return_value = providers
 
-        mock_insightface       = MagicMock()
+        mock_insightface = MagicMock()
         mock_insightface.app.FaceAnalysis = mock_face_analysis
         mock_insightface.model_zoo.get_model = MagicMock(return_value=mock_model)
 
-        with patch.dict("sys.modules", {
-            "insightface": mock_insightface,
-            "insightface.app": mock_insightface.app,
-            "onnxruntime": mock_ort,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "insightface": mock_insightface,
+                "insightface.app": mock_insightface.app,
+                "onnxruntime": mock_ort,
+            },
+        ):
             # Patch _find_model to return a dummy path
             with patch("face_swap._find_model", return_value="dummy.onnx"):
                 from face_swap import FaceSwapper
-                swapper = FaceSwapper(model_name="inswapper_128.onnx",
-                                      use_gpu=cuda_available)
+
+                swapper = FaceSwapper(model_name="inswapper_128.onnx", use_gpu=cuda_available)
         return swapper
 
     def test_cpu_mode_detected(self):
@@ -109,9 +106,11 @@ class TestFaceSwapperMode(unittest.TestCase):
         swapper = self._make_mock_swapper(cuda_available=False)
         # Force mode to cpu in case mock leaked
         swapper._mode = "cpu"
-        
-        with patch("pipelines.pipeline_cpu.process_video_cpu", return_value=(5, 2)) as mock_cpu, \
-             patch("pipelines.pipeline_gpu.process_video_gpu") as mock_gpu:
+
+        with (
+            patch("pipelines.pipeline_cpu.process_video_cpu", return_value=(5, 2)) as mock_cpu,
+            patch("pipelines.pipeline_gpu.process_video_gpu") as mock_gpu,
+        ):
             result = swapper.process_video_optimized(
                 source_face=MagicMock(),
                 video_path="/tmp/video.mp4",
@@ -127,8 +126,10 @@ class TestFaceSwapperMode(unittest.TestCase):
         swapper = self._make_mock_swapper(cuda_available=True)
         swapper._mode = "gpu"
 
-        with patch("pipelines.pipeline_gpu.process_video_gpu", return_value=(10, 0)) as mock_gpu, \
-             patch("pipelines.pipeline_cpu.process_video_cpu") as mock_cpu:
+        with (
+            patch("pipelines.pipeline_gpu.process_video_gpu", return_value=(10, 0)) as mock_gpu,
+            patch("pipelines.pipeline_cpu.process_video_cpu") as mock_cpu,
+        ):
             result = swapper.process_video_optimized(
                 source_face=MagicMock(),
                 video_path="/tmp/video.mp4",
@@ -145,9 +146,9 @@ class TestVideoUtilsCPUMode(unittest.TestCase):
 
     def test_cpu_mode_uses_ultrafast(self):
         """get_ffmpeg_writer with cpu_mode=True and is_preview=True should call ffmpeg with ultrafast preset."""
-        with patch("subprocess.Popen") as mock_popen, \
-             patch("video_utils._has_nvenc", return_value=False):
+        with patch("subprocess.Popen") as mock_popen, patch("video_utils._has_nvenc", return_value=False):
             from video_utils import get_ffmpeg_writer
+
             get_ffmpeg_writer(
                 output_path="/tmp/out.mp4",
                 fps=30.0,
@@ -213,9 +214,9 @@ class TestOrientationAndResizePlanning(unittest.TestCase):
 
     def test_gpu_mode_not_ultrafast(self):
         """get_ffmpeg_writer with is_preview=False should NOT use ultrafast when no NVENC."""
-        with patch("subprocess.Popen") as mock_popen, \
-             patch("video_utils._has_nvenc", return_value=False):
+        with patch("subprocess.Popen") as mock_popen, patch("video_utils._has_nvenc", return_value=False):
             from video_utils import get_ffmpeg_writer
+
             get_ffmpeg_writer(
                 output_path="/tmp/out.mp4",
                 fps=30.0,

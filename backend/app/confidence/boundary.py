@@ -17,10 +17,7 @@ class BoundaryCoherenceEvaluator:
         if image is None or image.size == 0:
             return np.zeros((0, 0), dtype=np.float64)
 
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
 
         sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
         sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
@@ -40,29 +37,19 @@ class BoundaryCoherenceEvaluator:
             - boundary_ratio: ratio of perimeter gradient to adjacent local gradient.
             - coherence_score: normalized score 0.0 to 100.0 (100 = perfectly blended).
         """
-        if (
-            composite_image is None
-            or mask is None
-            or composite_image.size == 0
-            or mask.size == 0
-        ):
+        if composite_image is None or mask is None or composite_image.size == 0 or mask.size == 0:
             return 1.0, 100.0
 
         h, w = composite_image.shape[:2]
         if mask.shape[:2] != (h, w):
             mask = cv2.resize(mask, (w, h))
 
-        if len(mask.shape) == 3:
-            mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-        else:
-            mask_gray = mask
+        mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY) if len(mask.shape) == 3 else mask
 
         # Binarize mask
         _, binary_mask = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
 
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (dilation_radius * 2 + 1, dilation_radius * 2 + 1)
-        )
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilation_radius * 2 + 1, dilation_radius * 2 + 1))
         dilated = cv2.dilate(binary_mask, kernel)
         eroded = cv2.erode(binary_mask, kernel)
 
@@ -80,10 +67,7 @@ class BoundaryCoherenceEvaluator:
         grad_mag = cls.compute_gradient_magnitude(composite_image)
         boundary_grad = float(np.mean(grad_mag[boundary_perimeter > 0]))
 
-        if interior_pixels > 0:
-            local_grad = float(np.mean(grad_mag[interior_region > 0]))
-        else:
-            local_grad = float(np.mean(grad_mag))
+        local_grad = float(np.mean(grad_mag[interior_region > 0])) if interior_pixels > 0 else float(np.mean(grad_mag))
 
         ratio = boundary_grad / (local_grad + 1e-6)
 

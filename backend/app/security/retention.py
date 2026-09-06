@@ -101,7 +101,9 @@ class RetentionManager:
 
         total_mb = round(up_stats.size_mb + out_stats.size_mb + frm_stats.size_mb, 2)
         status_counts = self.db.count_jobs_by_status()
-        stalled = sum(status_counts.get(s, 0) for s in ("queued", "running", "analyzing", "processing", "validating", "encoding"))
+        stalled = sum(
+            status_counts.get(s, 0) for s in ("queued", "running", "analyzing", "processing", "validating", "encoding")
+        )
 
         return RetentionStats(
             retention_hours=self.retention_hours,

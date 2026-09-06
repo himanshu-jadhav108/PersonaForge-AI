@@ -23,10 +23,7 @@ class FaceConfidenceEvaluator:
         if image is None or image.size == 0:
             return 0.0, 0.0
 
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
 
         mean_intensity = float(np.mean(gray))
         std_intensity = float(np.std(gray))

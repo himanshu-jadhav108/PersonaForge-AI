@@ -104,6 +104,7 @@ def test_retention_manager_cleanup(tmp_path: Path):
     (old_upload / "test.txt").write_text("old data", encoding="utf-8")
     old_mtime = time.time() - 7500
     import os
+
     os.utime(str(old_upload), (old_mtime, old_mtime))
     os.utime(str(old_upload / "test.txt"), (old_mtime, old_mtime))
 
@@ -118,46 +119,50 @@ def test_retention_manager_cleanup(tmp_path: Path):
     os.utime(str(old_out), (old_mtime, old_mtime))
 
     # Create old DB job
-    db.insert_job({
-        "id": "job_old",
-        "session_id": "sess_old",
-        "kind": "full",
-        "status": "done",
-        "stage": "completed",
-        "progress": 100,
-        "message": "done",
-        "output": "old_out.mp4",
-        "file_size_mb": 1.0,
-        "device": "CPU",
-        "mode": "cpu",
-        "similarity_score": 0.8,
-        "orientation": "landscape",
-        "input_width": 1280,
-        "input_height": 720,
-        "resize_mode": "maintain",
-        "created_at": "2020-01-01T00:00:00Z",
-    })
+    db.insert_job(
+        {
+            "id": "job_old",
+            "session_id": "sess_old",
+            "kind": "full",
+            "status": "done",
+            "stage": "completed",
+            "progress": 100,
+            "message": "done",
+            "output": "old_out.mp4",
+            "file_size_mb": 1.0,
+            "device": "CPU",
+            "mode": "cpu",
+            "similarity_score": 0.8,
+            "orientation": "landscape",
+            "input_width": 1280,
+            "input_height": 720,
+            "resize_mode": "maintain",
+            "created_at": "2020-01-01T00:00:00Z",
+        }
+    )
 
     # Create fresh DB job
-    db.insert_job({
-        "id": "job_fresh",
-        "session_id": "sess_fresh",
-        "kind": "full",
-        "status": "running",
-        "stage": "processing",
-        "progress": 50,
-        "message": "working",
-        "output": None,
-        "file_size_mb": None,
-        "device": "CPU",
-        "mode": "cpu",
-        "similarity_score": 0.8,
-        "orientation": "landscape",
-        "input_width": 1280,
-        "input_height": 720,
-        "resize_mode": "maintain",
-        "created_at": "2026-09-06T12:00:00Z",
-    })
+    db.insert_job(
+        {
+            "id": "job_fresh",
+            "session_id": "sess_fresh",
+            "kind": "full",
+            "status": "running",
+            "stage": "processing",
+            "progress": 50,
+            "message": "working",
+            "output": None,
+            "file_size_mb": None,
+            "device": "CPU",
+            "mode": "cpu",
+            "similarity_score": 0.8,
+            "orientation": "landscape",
+            "input_width": 1280,
+            "input_height": 720,
+            "resize_mode": "maintain",
+            "created_at": "2026-09-06T12:00:00Z",
+        }
+    )
 
     # Pre-cleanup telemetry check
     stats = mgr.get_storage_stats()
@@ -212,26 +217,29 @@ def test_job_cancellation_workflow():
 
     # Create a job in DB
     from main import db
+
     test_jid = uuid.uuid4().hex
-    db.insert_job({
-        "id": test_jid,
-        "session_id": "test_session_cancel",
-        "kind": "full",
-        "status": "processing",
-        "stage": "processing",
-        "progress": 45,
-        "message": "Swapping faces...",
-        "output": None,
-        "file_size_mb": None,
-        "device": "GPU",
-        "mode": "gpu",
-        "similarity_score": 0.82,
-        "orientation": "portrait",
-        "input_width": 720,
-        "input_height": 1280,
-        "resize_mode": "maintain",
-        "created_at": "2026-09-06T12:00:00Z",
-    })
+    db.insert_job(
+        {
+            "id": test_jid,
+            "session_id": "test_session_cancel",
+            "kind": "full",
+            "status": "processing",
+            "stage": "processing",
+            "progress": 45,
+            "message": "Swapping faces...",
+            "output": None,
+            "file_size_mb": None,
+            "device": "GPU",
+            "mode": "gpu",
+            "similarity_score": 0.82,
+            "orientation": "portrait",
+            "input_width": 720,
+            "input_height": 1280,
+            "resize_mode": "maintain",
+            "created_at": "2026-09-06T12:00:00Z",
+        }
+    )
 
     # Cancel the active job
     res_cancel = client.post(f"/cancel/{test_jid}")

@@ -142,7 +142,7 @@ class IdentityValidator:
         stable_count = sum(1 for r in self.records if r.drift_zone == "stable")
         warning_count = sum(1 for r in self.records if r.drift_zone == "warning")
         critical_count = sum(1 for r in self.records if r.drift_zone == "critical")
-        sudden_drops = sum(1 for r in self.records if getattr(r, 'sudden_drop', False))
+        sudden_drops = sum(1 for r in self.records if getattr(r, "sudden_drop", False))
         drifts = [r for r in self.records if r.is_drift]
 
         identity_score = self.scorer.calculate_identity_score(

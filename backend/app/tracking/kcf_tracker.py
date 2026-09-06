@@ -74,9 +74,12 @@ class KCFTracker(BaseFaceTracker):
             x, y, w, h = [int(v) for v in raw_bbox]
             # Sanity check: ensure tracked box is inside frame and has realistic aspect
             if (
-                w <= 4 or h <= 4
-                or x + w < 0 or y + h < 0
-                or x >= fw or y >= fh
+                w <= 4
+                or h <= 4
+                or x + w < 0
+                or y + h < 0
+                or x >= fw
+                or y >= fh
                 or (w / float(max(1, h)) > 3.0)
                 or (h / float(max(1, w)) > 3.0)
             ):

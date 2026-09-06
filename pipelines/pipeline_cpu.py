@@ -16,22 +16,22 @@ CPU optimisations applied here:
 """
 
 import logging
+import subprocess
 import time
+
 import cv2
 import numpy as np
-from pathlib import Path
-from typing import Optional
 
-from config import config_cpu as cfg
-from utils.tracker_factory import make_tracker
 from backend.app.tracking.factory import get_tracker
+from config import config_cpu as cfg
 from pipelines.blending.factory import get_blender
-from video_utils import get_video_info, get_ffmpeg_writer
+from video_utils import get_ffmpeg_writer, get_video_info
 
 logger = logging.getLogger("personaforge.pipeline_cpu")
 
 
 # ─── Internal helpers ──────────────────────────────────────────────────────────
+
 
 def _bbox_area(bbox) -> float:
     x1, y1, x2, y2 = bbox[:4]
@@ -54,7 +54,10 @@ def _write_frame_pipe(writer, frame: np.ndarray) -> None:
 def _direct_paste(
     frame: np.ndarray,
     crop: np.ndarray,
-    x1: int, y1: int, x2: int, y2: int,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
 ) -> np.ndarray:
     """Paste the swapped crop back using AlphaBlend (CPU mode)."""
     return get_blender("alpha").blend(frame, crop, x1, y1, x2, y2)
@@ -62,22 +65,23 @@ def _direct_paste(
 
 # ─── Public API ────────────────────────────────────────────────────────────────
 
+
 def process_video_cpu(
-    swapper_app,            # insightface FaceAnalysis instance
-    swap_adapter,           # InSwapperAdapter (or duck-typed equivalent)
-    source_face,            # insightface Face object for source
-    video_path:     str,
-    output_path:    str,
-    quality                 = None,     # QualityMode enum or string
-    face_index:     int     = -1,
-    max_frames:     Optional[int] = None,
-    progress_start: int     = 36,
-    progress_end:   int     = 78,
-    db_manager              = None,
-    job_id:         Optional[str] = None,
-    identity_validator      = None,
-    bitrate:        Optional[str] = None,
-    target_embedding: Optional[np.ndarray] = None,
+    swapper_app,  # insightface FaceAnalysis instance
+    swap_adapter,  # InSwapperAdapter (or duck-typed equivalent)
+    source_face,  # insightface Face object for source
+    video_path: str,
+    output_path: str,
+    quality=None,  # QualityMode enum or string
+    face_index: int = -1,
+    max_frames: int | None = None,
+    progress_start: int = 36,
+    progress_end: int = 78,
+    db_manager=None,
+    job_id: str | None = None,
+    identity_validator=None,
+    bitrate: str | None = None,
+    target_embedding: np.ndarray | None = None,
 ) -> tuple[int, int]:
     """
     CPU face-swap processing pipeline.
@@ -87,8 +91,8 @@ def process_video_cpu(
     FACE_CROP_PADDING = 0.50
 
     info = get_video_info(video_path)
-    total  = info.get("total_frames", 0)
-    fps    = info.get("fps", 30.0)
+    total = info.get("total_frames", 0)
+    fps = info.get("fps", 30.0)
     orig_w = info.get("width", 0)
     orig_h = info.get("height", 0)
 
@@ -101,7 +105,7 @@ def process_video_cpu(
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video '{video_path}'")
-        
+
     chosen_bitrate = bitrate or cfg.BITRATE or "3M"
     # Open FFMPEG pipe writer
     writer = get_ffmpeg_writer(
@@ -115,17 +119,21 @@ def process_video_cpu(
     )
 
     swapped = skipped = 0
-    tracker      = None
+    tracker = None
     tracked_bbox = None
-    last_result  = None
-    last_centre  = None
+    last_result = None
+    last_centre = None
 
-    detect_counter   = 0
+    detect_counter = 0
 
     t_start = time.perf_counter()
     logger.info(
         "[CPU] Pipeline start: %d frames, skip=%d, detect_every=%d, height=%dp, bitrate=%s",
-        total, cfg.PROCESS_EVERY_N_FRAMES, cfg.DETECT_EVERY, cfg.TARGET_HEIGHT, chosen_bitrate,
+        total,
+        cfg.PROCESS_EVERY_N_FRAMES,
+        cfg.DETECT_EVERY,
+        cfg.TARGET_HEIGHT,
+        chosen_bitrate,
     )
 
     try:
@@ -147,8 +155,7 @@ def process_video_cpu(
                 else:
                     writer.stdin.write(frame.tobytes())
                 skipped += 1
-                _update_progress(db_manager, job_id, i, total,
-                                 progress_start, progress_end, swapped, skipped)
+                _update_progress(db_manager, job_id, i, total, progress_start, progress_end, swapped, skipped)
                 continue
 
             # ── Load frame ─────────────────────────────────────────────────────
@@ -160,13 +167,12 @@ def process_video_cpu(
 
             # ── Pre-resize to TARGET_HEIGHT ────────────────────────────────────
             if cfg.TARGET_HEIGHT > 0 and orig_h > cfg.TARGET_HEIGHT:
-                scale  = cfg.TARGET_HEIGHT / orig_h
+                scale = cfg.TARGET_HEIGHT / orig_h
                 small_w = int(orig_w * scale)
-                small  = cv2.resize(frame, (small_w, cfg.TARGET_HEIGHT),
-                                    interpolation=cv2.INTER_LINEAR)
+                small = cv2.resize(frame, (small_w, cfg.TARGET_HEIGHT), interpolation=cv2.INTER_LINEAR)
             else:
-                scale  = 1.0
-                small  = frame
+                scale = 1.0
+                small = frame
 
             sh, sw = small.shape[:2]
             face_found = False
@@ -178,25 +184,25 @@ def process_video_cpu(
                 ok, bbox_small = tracker.update(small)
                 if ok:
                     tracked_bbox = tuple(int(v) for v in bbox_small)
-                    face_found   = True
+                    face_found = True
                 else:
-                    tracker       = None
+                    tracker = None
                     run_detection = True
 
             if run_detection:
                 all_faces = swapper_app.get(small)
                 if all_faces:
                     all_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
-                    best  = all_faces[0]
+                    best = all_faces[0]
                     x1s, y1s, x2s, y2s = [int(v) for v in best.bbox[:4]]
                     bw_s, bh_s = x2s - x1s, y2s - y1s
                     tracked_bbox = (x1s, y1s, bw_s, bh_s)
-                    face_found   = True
-                    tracker      = _make_tracker()
+                    face_found = True
+                    tracker = _make_tracker()
                     if tracker is not None:
                         tracker.init(small, tracked_bbox)
                 else:
-                    tracker      = None
+                    tracker = None
                     tracked_bbox = None
 
             detect_counter += 1
@@ -209,8 +215,7 @@ def process_video_cpu(
                 if dx < cfg.REUSE_THRESHOLD_PX and dy < cfg.REUSE_THRESHOLD_PX:
                     writer.stdin.write(last_result.tobytes())
                     skipped += 1
-                    _update_progress(db_manager, job_id, i, total,
-                                     progress_start, progress_end, swapped, skipped)
+                    _update_progress(db_manager, job_id, i, total, progress_start, progress_end, swapped, skipped)
                     continue
 
             # ── Crop-based Swap (on downscaled frame) ─────────────────────────
@@ -236,7 +241,7 @@ def process_video_cpu(
                         target_norm = float(np.linalg.norm(target_embedding))
                         if target_norm > 0:
                             for cf in crop_faces:
-                                cf_emb = getattr(cf, 'embedding', None)
+                                cf_emb = getattr(cf, "embedding", None)
                                 if cf_emb is not None:
                                     cf_emb_arr = np.array(cf_emb, dtype=np.float32).flatten()
                                     cf_norm = float(np.linalg.norm(cf_emb_arr))
@@ -252,20 +257,20 @@ def process_video_cpu(
                         targets = crop_faces
 
                     result_crop = crop.copy()
-                    did_swap    = False
+                    did_swap = False
                     for tf in targets:
                         try:
                             result_crop = swap_adapter.swap_face(result_crop, tf, source_face)
-                            did_swap    = True
+                            did_swap = True
                         except Exception as e:
                             logger.debug("[CPU] Swap on crop failed: %s", e)
 
                     if did_swap:
                         # Direct paste — no seamlessClone in CPU mode
                         result_small = _direct_paste(small, result_crop, x1c, y1c, x2c, y2c)
-                        last_centre  = _centre(tracked_bbox)
+                        last_centre = _centre(tracked_bbox)
                         swapped += 1
-                        
+
                         # Periodic validation avoids massive CPU FaceAnalysis overhead
                         val_freq = 15 if (quality and getattr(quality, "value", quality) == "fast") else 5
                         if identity_validator and (i % val_freq == 0 or i == total - 1):
@@ -274,7 +279,9 @@ def process_video_cpu(
                                 swapped_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
                                 swapped_face = swapped_faces[0]
                                 timestamp = float(i) / max(1.0, fps)
-                                identity_validator.add_record(i, timestamp, source_face.embedding, swapped_face.embedding)
+                                identity_validator.add_record(
+                                    i, timestamp, source_face.embedding, swapped_face.embedding
+                                )
                     else:
                         skipped += 1
                 else:
@@ -284,8 +291,7 @@ def process_video_cpu(
 
             # ── Scale result back to original resolution ───────────────────────
             if scale < 1.0:
-                result_full = cv2.resize(result_small, (orig_w, orig_h),
-                                         interpolation=cv2.INTER_LINEAR)
+                result_full = cv2.resize(result_small, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
             else:
                 result_full = result_small
 
@@ -293,8 +299,7 @@ def process_video_cpu(
 
             # ── Direct Pipe Write ──────────────────────────────────────────────
             writer.stdin.write(result_full.tobytes())
-            _update_progress(db_manager, job_id, i, total,
-                             progress_start, progress_end, swapped, skipped)
+            _update_progress(db_manager, job_id, i, total, progress_start, progress_end, swapped, skipped)
 
     finally:
         cap.release()
@@ -302,18 +307,23 @@ def process_video_cpu(
             if writer.stdin:
                 try:
                     writer.stdin.close()
-                except Exception:
-                    pass
+                except (BrokenPipeError, OSError) as e:
+                    logger.debug("Error closing stdin: %s", e)
             try:
                 writer.wait(timeout=10)
-            except Exception:
+            except subprocess.TimeoutExpired:
                 writer.kill()
+            except OSError as e:
+                logger.debug("Error waiting for process: %s", e)
 
     elapsed = time.perf_counter() - t_start
     fps_out = total / elapsed if elapsed > 0 else 0
     logger.info(
         "[CPU] Done in %.1fs → %.1f fps | swapped=%d skipped=%d",
-        elapsed, fps_out, swapped, skipped,
+        elapsed,
+        fps_out,
+        swapped,
+        skipped,
     )
     return swapped, skipped
 
@@ -323,20 +333,18 @@ def process_video_cpu(
 _last_cpu_progress_time = 0.0
 _last_cpu_progress_pct = -1
 
-def _update_progress(
-    db_manager, job_id, i, total,
-    progress_start, progress_end, swapped, skipped
-) -> None:
+
+def _update_progress(db_manager, job_id, i, total, progress_start, progress_end, swapped, skipped) -> None:
     global _last_cpu_progress_time, _last_cpu_progress_pct
     if db_manager is not None and job_id is not None:
         now = time.monotonic()
         span = progress_end - progress_start
-        pct  = progress_start + int((i + 1) / total * span)
+        pct = progress_start + int((i + 1) / total * span)
         # Throttle writes to at most once per 500ms or when percentage changes
         if (now - _last_cpu_progress_time >= 0.5) or (pct != _last_cpu_progress_pct) or (i == total - 1):
             _last_cpu_progress_time = now
             _last_cpu_progress_pct = pct
-            db_manager.update_job(job_id, {
-                "progress": pct,
-                "message": f"[CPU] Frame {i+1}/{total} — swapped={swapped}, skipped={skipped}"
-            })
+            db_manager.update_job(
+                job_id,
+                {"progress": pct, "message": f"[CPU] Frame {i + 1}/{total} — swapped={swapped}, skipped={skipped}"},
+            )

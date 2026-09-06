@@ -55,7 +55,7 @@ class FaceEmbeddingExtractor:
                 reverse=True,
             )
             return cls.extract_from_face(faces[0])
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("Failed to extract face embedding from crop: %s", e)
             return None
 

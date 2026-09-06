@@ -1,20 +1,19 @@
-import math
-import uuid
 import logging
+import math
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Any
 
 import cv2
 import numpy as np
 
 from backend.app.selection.models import (
-    SelectionMode,
     FaceProfile,
-    VideoMetadata,
     MediaAnalysisResponse,
+    SelectionMode,
     SelectionReport,
+    VideoMetadata,
 )
-from video_utils import get_video_info, get_file_size_mb
+from video_utils import get_file_size_mb, get_video_info
 
 logger = logging.getLogger("personaforge.selection")
 
@@ -25,8 +24,8 @@ def _calculate_frontal_score(face: Any, bbox_area: float) -> float:
     In InsightFace buffalo_l, kps = [left_eye, right_eye, nose, left_mouth, right_mouth].
     Frontal face exhibits horizontal eye alignment, nose centering between eyes, and mouth symmetry.
     """
-    det_score = float(getattr(face, 'det_score', 0.85) or 0.85)
-    kps = getattr(face, 'kps', None)
+    det_score = float(getattr(face, "det_score", 0.85) or 0.85)
+    kps = getattr(face, "kps", None)
 
     if kps is None or len(kps) != 5:
         # Fallback when landmarks are unavailable
@@ -69,7 +68,7 @@ def _calculate_frontal_score(face: Any, bbox_area: float) -> float:
 
 
 class SmartFaceSelector:
-    def __init__(self, face_analysis_app: Optional[Any], output_dir: Path):
+    def __init__(self, face_analysis_app: Any | None, output_dir: Path):
         self.app = face_analysis_app
         self.output_dir = Path(output_dir)
 
@@ -96,7 +95,7 @@ class SmartFaceSelector:
         self,
         video_path: str,
         sample_rate_hz: float = 1.0,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """
         Samples the video and extracts all faces along with frame illumination and sharpness stats.
         Returns (extracted_faces, frame_statistics).
@@ -110,13 +109,12 @@ class SmartFaceSelector:
             fps = 30.0
 
         frame_skip = int(fps / sample_rate_hz)
-        if frame_skip < 1:
-            frame_skip = 1
+        frame_skip = max(frame_skip, 1)
 
         frame_idx = 0
-        extracted_faces: List[Dict[str, Any]] = []
-        luminances: List[float] = []
-        sharpnesses: List[float] = []
+        extracted_faces: list[dict[str, Any]] = []
+        luminances: list[float] = []
+        sharpnesses: list[float] = []
 
         try:
             while True:
@@ -155,13 +153,15 @@ class SmartFaceSelector:
                                 bbox_area = max(0.0, float((x2 - x1) * (y2 - y1)))
                                 frontal_score = _calculate_frontal_score(f, bbox_area)
 
-                                extracted_faces.append({
-                                    'frame_idx': frame_idx,
-                                    'face': f,
-                                    'crop': crop,
-                                    'bbox_area': bbox_area,
-                                    'frontal_score': frontal_score,
-                                })
+                                extracted_faces.append(
+                                    {
+                                        "frame_idx": frame_idx,
+                                        "face": f,
+                                        "crop": crop,
+                                        "bbox_area": bbox_area,
+                                        "frontal_score": frontal_score,
+                                    }
+                                )
                 frame_idx += 1
         finally:
             cap.release()
@@ -176,19 +176,19 @@ class SmartFaceSelector:
 
     def cluster_faces(
         self,
-        extracted_faces: List[Dict[str, Any]],
+        extracted_faces: list[dict[str, Any]],
         threshold: float = 0.45,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Groups extracted faces by identity using ArcFace embedding cosine similarity.
         Clusters are ordered by prevalence (detection frequency & visibility duration),
         so primary subjects consistently map to 'person_1', 'person_2', etc.
         """
-        clusters: List[Dict[str, Any]] = []
+        clusters: list[dict[str, Any]] = []
 
         for item in extracted_faces:
-            face = item['face']
-            emb_raw = getattr(face, 'embedding', None)
+            face = item["face"]
+            emb_raw = getattr(face, "embedding", None)
             if emb_raw is None:
                 continue
 
@@ -198,12 +198,12 @@ class SmartFaceSelector:
                 continue
             norm_emb_vec = emb / norm_emb
 
-            best_match_idx: Optional[int] = None
+            best_match_idx: int | None = None
             best_sim = -1.0
 
             # Compare against running centroid of each cluster
             for c_idx, cluster in enumerate(clusters):
-                centroid = cluster['centroid']
+                centroid = cluster["centroid"]
                 sim = float(np.dot(norm_emb_vec, centroid))
                 if sim > best_sim:
                     best_sim = sim
@@ -211,39 +211,41 @@ class SmartFaceSelector:
 
             if best_match_idx is not None and best_sim >= threshold:
                 target_cluster = clusters[best_match_idx]
-                target_cluster['items'].append(item)
-                target_cluster['sum_emb'] += norm_emb_vec
-                norm_sum = np.linalg.norm(target_cluster['sum_emb'])
-                target_cluster['centroid'] = target_cluster['sum_emb'] / (norm_sum + 1e-6)
+                target_cluster["items"].append(item)
+                target_cluster["sum_emb"] += norm_emb_vec
+                norm_sum = np.linalg.norm(target_cluster["sum_emb"])
+                target_cluster["centroid"] = target_cluster["sum_emb"] / (norm_sum + 1e-6)
             else:
-                clusters.append({
-                    'items': [item],
-                    'centroid': norm_emb_vec.copy(),
-                    'sum_emb': norm_emb_vec.copy(),
-                })
+                clusters.append(
+                    {
+                        "items": [item],
+                        "centroid": norm_emb_vec.copy(),
+                        "sum_emb": norm_emb_vec.copy(),
+                    }
+                )
 
         # Sort clusters by prevalence (number of items descending, then bbox area)
         clusters.sort(
-            key=lambda c: (len(c['items']), sum(i.get('bbox_area', 0.0) for i in c['items'])),
+            key=lambda c: (len(c["items"]), sum(i.get("bbox_area", 0.0) for i in c["items"])),
             reverse=True,
         )
 
         # Build clean person_1, person_2... mapping
-        result: Dict[str, List[Dict[str, Any]]] = {}
+        result: dict[str, list[dict[str, Any]]] = {}
         for idx, cluster in enumerate(clusters):
             person_key = f"person_{idx + 1}"
-            result[person_key] = cluster['items']
+            result[person_key] = cluster["items"]
 
         return result
 
-    def _calculate_mouth_variance(self, cluster_items: List[Dict[str, Any]]) -> float:
+    def _calculate_mouth_variance(self, cluster_items: list[dict[str, Any]]) -> float:
         """
         Approximates a speaking score by calculating variance in the nose-to-mouth distance across frames.
         """
-        distances: List[float] = []
+        distances: list[float] = []
         for item in cluster_items:
-            face = item['face']
-            kps = getattr(face, 'kps', None)
+            face = item["face"]
+            kps = getattr(face, "kps", None)
             if kps is not None and len(kps) == 5:
                 kps = np.asarray(kps, dtype=np.float32)
                 nose = kps[2]
@@ -253,7 +255,7 @@ class SmartFaceSelector:
                 mouth_center = (left_mouth + right_mouth) / 2.0
                 dist = float(np.linalg.norm(nose - mouth_center))
 
-                bbox = getattr(face, 'bbox', None)
+                bbox = getattr(face, "bbox", None)
                 if bbox is not None and len(bbox) >= 4:
                     height = float(bbox[3] - bbox[1])
                     if height > 0:
@@ -266,34 +268,36 @@ class SmartFaceSelector:
 
     def calculate_profiles(
         self,
-        clusters: Dict[str, List[Dict[str, Any]]],
+        clusters: dict[str, list[dict[str, Any]]],
         total_sampled_frames: int,
         prefix: str = "",
-    ) -> List[FaceProfile]:
+    ) -> list[FaceProfile]:
         """
         Builds FaceProfile objects for each clustered identity, selecting the highest-quality
         frontal crop as the representative thumbnail.
         """
-        profiles: List[FaceProfile] = []
+        profiles: list[FaceProfile] = []
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         for person_idx, (cluster_id, items) in enumerate(clusters.items()):
-            areas: List[float] = []
-            det_scores: List[float] = []
-            frontal_scores: List[float] = []
-            embeddings: List[np.ndarray] = []
+            areas: list[float] = []
+            det_scores: list[float] = []
+            frontal_scores: list[float] = []
+            embeddings: list[np.ndarray] = []
 
             for item in items:
-                face = item['face']
-                areas.append(item.get('bbox_area', 0.0))
+                face = item["face"]
+                areas.append(item.get("bbox_area", 0.0))
 
-                det = float(getattr(face, 'det_score', 0.85) or 0.85)
+                det = float(getattr(face, "det_score", 0.85) or 0.85)
                 det_scores.append(det)
 
-                frontal = float(item.get('frontal_score', 0.0) or _calculate_frontal_score(face, item.get('bbox_area', 0.0)))
+                frontal = float(
+                    item.get("frontal_score", 0.0) or _calculate_frontal_score(face, item.get("bbox_area", 0.0))
+                )
                 frontal_scores.append(frontal)
 
-                emb_raw = getattr(face, 'embedding', None)
+                emb_raw = getattr(face, "embedding", None)
                 if emb_raw is not None:
                     emb_arr = np.array(emb_raw, dtype=np.float32).flatten()
                     n = np.linalg.norm(emb_arr)
@@ -304,12 +308,12 @@ class SmartFaceSelector:
             avg_det = round(float(np.mean(det_scores) * 100.0), 2) if det_scores else 0.0
             avg_frontal = round(float(np.mean(frontal_scores)), 2) if frontal_scores else 0.0
 
-            unique_frames = len(set(item['frame_idx'] for item in items))
+            unique_frames = len({item["frame_idx"] for item in items})
             visibility = round((unique_frames / max(1, total_sampled_frames)) * 100.0, 2)
             speaking_score = self._calculate_mouth_variance(items)
 
             # Representative embedding (normalized centroid)
-            rep_emb: Optional[List[float]] = None
+            rep_emb: list[float] | None = None
             if embeddings:
                 sum_emb = np.sum(embeddings, axis=0)
                 n = np.linalg.norm(sum_emb)
@@ -319,10 +323,10 @@ class SmartFaceSelector:
             # Select the best crop: candidate with highest frontal score & resolution
             items_sorted = sorted(
                 items,
-                key=lambda i: (i.get('frontal_score', 0.0), getattr(i['face'], 'det_score', 0.0)),
+                key=lambda i: (i.get("frontal_score", 0.0), getattr(i["face"], "det_score", 0.0)),
                 reverse=True,
             )
-            best_crop = items_sorted[0].get('crop')
+            best_crop = items_sorted[0].get("crop")
 
             # Build clean thumbnail filename
             thumb_name = f"{prefix}_{cluster_id}_thumb.jpg" if prefix else f"{cluster_id}_thumb.jpg"
@@ -352,20 +356,17 @@ class SmartFaceSelector:
     def evaluate_warnings(
         self,
         metadata: VideoMetadata,
-        frame_stats: Dict[str, Any],
-        profiles: List[FaceProfile],
-    ) -> Tuple[List[str], str]:
+        frame_stats: dict[str, Any],
+        profiles: list[FaceProfile],
+    ) -> tuple[list[str], str]:
         """
         Produces explainable heuristic diagnostic warnings and recommends the optimal processing mode.
         """
-        warnings: List[str] = []
+        warnings: list[str] = []
 
         # 1. Resolution checks
-        if metadata.height > 0 and metadata.width > 0:
-            if metadata.height < 480 or metadata.width < 480:
-                warnings.append(
-                    f"Low video resolution ({metadata.width}x{metadata.height}). Output detail may be limited."
-                )
+        if metadata.height > 0 and metadata.width > 0 and (metadata.height < 480 or metadata.width < 480):
+            warnings.append(f"Low video resolution ({metadata.width}x{metadata.height}). Output detail may be limited.")
 
         # 2. Lighting checks
         avg_lum = frame_stats.get("avg_luminance", 128.0)
@@ -419,7 +420,7 @@ class SmartFaceSelector:
 
         return warnings, recommended_mode
 
-    def rank_and_select(self, profiles: List[FaceProfile], mode: SelectionMode) -> Tuple[FaceProfile, float]:
+    def rank_and_select(self, profiles: list[FaceProfile], mode: SelectionMode) -> tuple[FaceProfile, float]:
         """
         Ranks candidates under the chosen selection criteria and returns (selected_profile, confidence_score).
         """
@@ -471,7 +472,7 @@ class SmartFaceSelector:
         video_path: str,
         mode: SelectionMode = SelectionMode.LARGEST,
         sample_rate_hz: float = 1.0,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
     ) -> MediaAnalysisResponse:
         """
         Unified end-to-end media analysis combining stream metadata probing,

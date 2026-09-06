@@ -43,9 +43,7 @@ class ClassicEnhancer(BaseFaceRestorer):
 
         # 2. Unsharp masking for eyes and facial contours
         blurred = cv2.GaussianBlur(smooth, (0, 0), sigmaX=3)
-        enhanced = cv2.addWeighted(
-            smooth, 1.0 + self.unsharp_amount, blurred, -self.unsharp_amount, 0
-        )
+        enhanced = cv2.addWeighted(smooth, 1.0 + self.unsharp_amount, blurred, -self.unsharp_amount, 0)
 
         # 3. Blend with original input
         if weight < 1.0:

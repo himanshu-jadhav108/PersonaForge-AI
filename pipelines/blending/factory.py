@@ -2,7 +2,6 @@
 factory.py — Factory function for obtaining face blending implementations.
 """
 
-
 from pipelines.blending.alpha_blend import AlphaBlend
 from pipelines.blending.base import BaseBlender
 from pipelines.blending.feathered_blend import FeatheredBlend

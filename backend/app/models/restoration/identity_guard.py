@@ -33,12 +33,7 @@ class RestorationIdentityGuard:
         Returns:
             (final_crop, drift_detected, safe_weight, sim_drop)
         """
-        if (
-            source_embedding is None
-            or pre_restored_crop is None
-            or restored_crop is None
-            or face_analysis_app is None
-        ):
+        if source_embedding is None or pre_restored_crop is None or restored_crop is None or face_analysis_app is None:
             return restored_crop, False, 1.0, 0.0
 
         try:
@@ -63,13 +58,11 @@ class RestorationIdentityGuard:
                     self.max_allowed_drop,
                     safe_weight,
                 )
-                guarded_crop = cv2.addWeighted(
-                    restored_crop, safe_weight, pre_restored_crop, 1.0 - safe_weight, 0
-                )
+                guarded_crop = cv2.addWeighted(restored_crop, safe_weight, pre_restored_crop, 1.0 - safe_weight, 0)
                 return guarded_crop, True, round(safe_weight, 3), round(sim_drop, 4)
 
             return restored_crop, False, 1.0, round(sim_drop, 4)
 
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             logger.debug("Identity guard evaluation bypassed due to exception: %s", err)
             return restored_crop, False, 1.0, 0.0

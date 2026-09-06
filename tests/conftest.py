@@ -4,7 +4,9 @@ import tempfile
 import uuid
 from pathlib import Path
 
-_BASE_TEST_DIR = Path(__file__).parent.parent / "outputs" / "pytest_temp"
+import pytest
+
+_BASE_TEST_DIR = Path(__file__).parent / ".test_tmp"
 _BASE_TEST_DIR.mkdir(parents=True, exist_ok=True)
 
 tempfile.tempdir = str(_BASE_TEST_DIR)
@@ -37,3 +39,11 @@ class SafeTemporaryDirectory:
 
 
 tempfile.TemporaryDirectory = SafeTemporaryDirectory
+
+
+@pytest.fixture
+def tmp_path():
+    d = _BASE_TEST_DIR / f"test_{uuid.uuid4().hex}"
+    d.mkdir(parents=True, exist_ok=True)
+    yield d
+    shutil.rmtree(d, ignore_errors=True)

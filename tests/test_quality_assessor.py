@@ -21,13 +21,20 @@ class MockFace:
         self.bbox = bbox
         self.pose = pose
         self.det_score = det_score
-        self.kps = kps if kps is not None else np.array([
-            [150.0, 150.0],  # right eye
-            [250.0, 150.0],  # left eye
-            [200.0, 200.0],  # nose
-            [160.0, 260.0],  # right mouth corner
-            [240.0, 260.0],  # left mouth corner
-        ], dtype=np.float32)
+        self.kps = (
+            kps
+            if kps is not None
+            else np.array(
+                [
+                    [150.0, 150.0],  # right eye
+                    [250.0, 150.0],  # left eye
+                    [200.0, 200.0],  # nose
+                    [160.0, 260.0],  # right mouth corner
+                    [240.0, 260.0],  # left mouth corner
+                ],
+                dtype=np.float32,
+            )
+        )
 
 
 class MockFaceAnalysis:
@@ -36,11 +43,13 @@ class MockFaceAnalysis:
 
     def get(self, image):
         # We simulate finding one face in the image
-        return [MockFace(
-            bbox=[100, 100, 300, 300],  # x1, y1, x2, y2
-            pose=[0.0, 0.0, 0.0],       # pitch, yaw, roll
-            det_score=0.99,
-        )]
+        return [
+            MockFace(
+                bbox=[100, 100, 300, 300],  # x1, y1, x2, y2
+                pose=[0.0, 0.0, 0.0],  # pitch, yaw, roll
+                det_score=0.99,
+            )
+        ]
 
 
 @pytest.fixture
@@ -105,7 +114,7 @@ def test_assess_image_overall(assessor, benchmark_dir):
 
     assert report.quality_score > 0
     assert report.metrics.face_angle == 100.0  # based on our mock pose
-    assert report.metrics.occlusion == 99.0    # based on our mock det_score
+    assert report.metrics.occlusion == 99.0  # based on our mock det_score
     assert len(report.recommendations) >= 0
 
 
@@ -158,13 +167,16 @@ def test_laplacian_blur_detector(benchmark_dir):
 
 def test_landmark_stability_evaluator():
     # Base 5-point landmark (IOD = 100.0 pixels between eye indices 0 and 1)
-    kps1 = np.array([
-        [150.0, 150.0],
-        [250.0, 150.0],
-        [200.0, 200.0],
-        [160.0, 260.0],
-        [240.0, 260.0],
-    ], dtype=np.float32)
+    kps1 = np.array(
+        [
+            [150.0, 150.0],
+            [250.0, 150.0],
+            [200.0, 200.0],
+            [160.0, 260.0],
+            [240.0, 260.0],
+        ],
+        dtype=np.float32,
+    )
 
     iod = LandmarkStabilityEvaluator.compute_iod(kps1)
     assert np.isclose(iod, 100.0)
@@ -219,6 +231,7 @@ def test_face_confidence_evaluator():
         def __init__(self):
             self.bbox = [0, 0, 10, 10]
             self.det_score = 0.90
+
     assert FaceConfidenceEvaluator.calculate_face_angle_score(MockNoPose()) == 80.0
 
 

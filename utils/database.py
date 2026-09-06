@@ -1,11 +1,9 @@
-import sqlite3
-import json
 import logging
-import datetime
-from pathlib import Path
-from typing import Optional, List, Dict, Any
+import sqlite3
+from typing import Any
 
 logger = logging.getLogger("personaforge.database")
+
 
 class JobDB:
     def __init__(self, db_path: str = "jobs.db"):
@@ -38,21 +36,21 @@ class JobDB:
                     processing_time_sec REAL
                 )
             """)
-            
+
             # Migration for existing DBs
             try:
                 cursor.execute("ALTER TABLE jobs ADD COLUMN completed_at TEXT")
             except sqlite3.OperationalError:
                 pass
-            
+
             try:
                 cursor.execute("ALTER TABLE jobs ADD COLUMN processing_time_sec REAL")
             except sqlite3.OperationalError:
                 pass
-                
+
             conn.commit()
 
-    def insert_job(self, job_data: Dict[str, Any]):
+    def insert_job(self, job_data: dict[str, Any]):
         keys = list(job_data.keys())
         placeholders = ", ".join(["?"] * len(keys))
         columns = ", ".join(keys)
@@ -63,18 +61,18 @@ class JobDB:
             cursor.execute(f"INSERT INTO jobs ({columns}) VALUES ({placeholders})", values)
             conn.commit()
 
-    def update_job(self, job_id: str, updates: Dict[str, Any]):
+    def update_job(self, job_id: str, updates: dict[str, Any]):
         if not updates:
             return
-        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-        values = tuple(updates.values()) + (job_id,)
+        set_clause = ", ".join([f"{k} = ?" for k in updates])
+        values = (*updates.values(), job_id)
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(f"UPDATE jobs SET {set_clause} WHERE id = ?", values)
             conn.commit()
 
-    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -82,18 +80,16 @@ class JobDB:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_recent_jobs(self, limit: int = 20) -> List[Dict[str, Any]]:
+    def get_recent_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_running_job(self) -> Optional[Dict[str, Any]]:
+    def get_running_job(self) -> dict[str, Any] | None:
         """Find any job that was left in an active processing or queued state."""
-        active_statuses = (
-            "running", "queued", "analyzing", "processing", "validating", "encoding"
-        )
+        active_statuses = ("running", "queued", "analyzing", "processing", "validating", "encoding")
         placeholders = ", ".join(["?"] * len(active_statuses))
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -107,9 +103,7 @@ class JobDB:
 
     def fail_stalled_jobs(self):
         """Mark any active or queued jobs as failed (crash recovery)."""
-        active_statuses = (
-            "running", "queued", "analyzing", "processing", "validating", "encoding"
-        )
+        active_statuses = ("running", "queued", "analyzing", "processing", "validating", "encoding")
         placeholders = ", ".join(["?"] * len(active_statuses))
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()

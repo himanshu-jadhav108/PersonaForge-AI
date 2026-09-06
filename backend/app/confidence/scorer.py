@@ -126,7 +126,9 @@ class PersonaForgeIntegrityScorer:
             id_exp = f"Strong identity retention ({cosine_similarity:.3f} cosine similarity against source face)."
         elif norm_sim >= 45.0:
             id_status = "acceptable"
-            id_exp = f"Moderate identity match ({cosine_similarity:.3f} similarity); minor yaw angle or lighting divergence."
+            id_exp = (
+                f"Moderate identity match ({cosine_similarity:.3f} similarity); minor yaw angle or lighting divergence."
+            )
         else:
             id_status = "warning"
             id_exp = f"Low identity similarity ({cosine_similarity:.3f}); potential facial drift or landmark tracking failure."
@@ -223,11 +225,7 @@ class PersonaForgeIntegrityScorer:
             )
 
         # Composite score
-        total_score = (
-            id_comp.weighted_contribution
-            + sharp_comp.weighted_contribution
-            + stab_comp.weighted_contribution
-        )
+        total_score = id_comp.weighted_contribution + sharp_comp.weighted_contribution + stab_comp.weighted_contribution
         if boundary_comp:
             total_score += boundary_comp.weighted_contribution
         if det_comp:
@@ -278,13 +276,21 @@ class PersonaForgeIntegrityScorer:
 
         recommendations: list[str] = []
         if norm_sim < 60.0:
-            recommendations.append("Source identity preservation is suboptimal. Consider a higher-resolution frontal source portrait.")
+            recommendations.append(
+                "Source identity preservation is suboptimal. Consider a higher-resolution frontal source portrait."
+            )
         if norm_sharp < 50.0:
-            recommendations.append("Face output exhibits blurriness. Processing in 'high' mode or applying restoration will sharpen details.")
+            recommendations.append(
+                "Face output exhibits blurriness. Processing in 'high' mode or applying restoration will sharpen details."
+            )
         if norm_stab < 70.0:
-            recommendations.append("Video shows landmark jitter. Enable correlation filter tracking or stabilize the source footage.")
+            recommendations.append(
+                "Video shows landmark jitter. Enable correlation filter tracking or stabilize the source footage."
+            )
         if boundary_comp and boundary_comp.normalized_score < 60.0:
-            recommendations.append("Seam boundary transition is noticeable. Use 'FeatheredBlend' with larger blur radius.")
+            recommendations.append(
+                "Seam boundary transition is noticeable. Use 'FeatheredBlend' with larger blur radius."
+            )
 
         if not recommendations:
             recommendations.append("Overall integrity is excellent! Pipeline generated studio-grade output.")

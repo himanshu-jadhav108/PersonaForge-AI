@@ -71,9 +71,10 @@ def test_mode_benchmark_engine_run():
         mock_swapper.get_source_face.return_value = {"bbox": [10, 10, 100, 100]}
         mock_swapper.process_video_optimized.return_value = (50, 0)
 
-        with patch("backend.app.analytics.mode_benchmark.get_video_info") as mock_info, \
-             patch("backend.app.analytics.mode_benchmark.get_file_size_mb", return_value=1.5):
-
+        with (
+            patch("backend.app.analytics.mode_benchmark.get_video_info") as mock_info,
+            patch("backend.app.analytics.mode_benchmark.get_file_size_mb", return_value=1.5),
+        ):
             mock_info.return_value = {
                 "fps": 30.0,
                 "width": 1280,
@@ -113,13 +114,18 @@ def test_benchmark_router_endpoints():
     reports_dir.mkdir(parents=True, exist_ok=True)
     test_sess_id = f"test_{uuid.uuid4().hex[:8]}"
     sample_json = reports_dir / f"benchmark_report_{test_sess_id}.json"
-    sample_json.write_text(json.dumps({
-        "benchmark_id": f"bench_{test_sess_id}",
-        "session_id": test_sess_id,
-        "scope_banner": "Benchmark Results: Measured across a representative sample segment (non-simulated).",
-        "recommended_mode": "balanced",
-        "modes": {}
-    }), encoding="utf-8")
+    sample_json.write_text(
+        json.dumps(
+            {
+                "benchmark_id": f"bench_{test_sess_id}",
+                "session_id": test_sess_id,
+                "scope_banner": "Benchmark Results: Measured across a representative sample segment (non-simulated).",
+                "recommended_mode": "balanced",
+                "modes": {},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     res_get_ok = client.get(f"/analytics/benchmark/{test_sess_id}")
     assert res_get_ok.status_code == 200

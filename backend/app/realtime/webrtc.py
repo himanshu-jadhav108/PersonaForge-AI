@@ -1,11 +1,13 @@
 import asyncio
 import logging
+
 from aiortc import VideoStreamTrack
 from av import VideoFrame
 
 from backend.app.realtime.stream_processor import RealTimeProcessor
 
 logger = logging.getLogger("personaforge.realtime.webrtc")
+
 
 class FaceSwapVideoStreamTrack(VideoStreamTrack):
     """
@@ -16,7 +18,7 @@ class FaceSwapVideoStreamTrack(VideoStreamTrack):
         super().__init__()
         self.track = track
         self.processor = processor
-        self._queue = asyncio.Queue(maxsize=1) # Low latency queue, drop frames if backlogged
+        self._queue = asyncio.Queue(maxsize=1)  # Low latency queue, drop frames if backlogged
 
     async def recv(self):
         frame = await self.track.recv()

@@ -31,7 +31,7 @@ class TestBlendingModule(unittest.TestCase):
     def test_alpha_blend(self):
         blender = AlphaBlend()
         self.assertIsInstance(blender, BaseBlender)
-        
+
         result = blender.blend(self.frame, self.crop, self.x1, self.y1, self.x2, self.y2)
         self.assertEqual(result.shape, self.frame.shape)
         self.assertEqual(result.dtype, np.uint8)
@@ -43,7 +43,7 @@ class TestBlendingModule(unittest.TestCase):
     def test_feathered_blend(self):
         blender = FeatheredBlend(feather_radius=5)
         self.assertIsInstance(blender, BaseBlender)
-        
+
         result = blender.blend(self.frame, self.crop, self.x1, self.y1, self.x2, self.y2)
         self.assertEqual(result.shape, self.frame.shape)
         self.assertEqual(result.dtype, np.uint8)
@@ -55,7 +55,7 @@ class TestBlendingModule(unittest.TestCase):
     def test_seamless_clone_experimental_fallback(self):
         blender = SeamlessCloneExperimental()
         self.assertIsInstance(blender, BaseBlender)
-        
+
         # Even with boundary coordinates close to edges, it should not raise
         result = blender.blend(self.frame, self.crop, self.x1, self.y1, self.x2, self.y2)
         self.assertEqual(result.shape, self.frame.shape)
@@ -79,7 +79,7 @@ class TestTrackingModule(unittest.TestCase):
     def test_detection_only_tracker(self):
         tracker = DetectionOnlyTracker()
         self.assertIsInstance(tracker, BaseFaceTracker)
-        
+
         tracker.init(self.frame, self.bbox)
         success, bbox_out = tracker.update(self.frame)
         self.assertFalse(success, "DetectionOnlyTracker must always return False to trigger detection")
@@ -88,7 +88,7 @@ class TestTrackingModule(unittest.TestCase):
     def test_kcf_tracker_contract(self):
         tracker = KCFTracker()
         self.assertIsInstance(tracker, BaseFaceTracker)
-        
+
         tracker.init(self.frame, self.bbox)
         success, bbox_out = tracker.update(self.frame)
         # On a blank frame it might succeed or fail, but must conform to return signature

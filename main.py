@@ -4,60 +4,65 @@ main.py — PersonaForge AI · FastAPI Application
 Endpoints:
   GET  /              → serve index.html
   POST /upload        → upload image + video, return session_id
-  POST /preview       → generate 3–5 s preview clip (background)
+  POST /preview       → generate 3-5 s preview clip (background)
   POST /process       → full processing (can skip preview frames)
   GET  /status/{jid}  → poll job status with stage, progress, message
   GET  /download/{fn} → stream output file
   GET  /jobs          → list recent jobs (history)
 """
 
+import asyncio
 import json
+import logging
 import os
-import re
 import time
 import uuid
-import logging
-import asyncio
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Optional
-from collections import OrderedDict
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from functools import partial
+from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Query
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 
-from video_utils import (
-    extract_audio, mux_audio, resize_video,
-    get_video_info, get_file_size_mb, cleanup_temp_dirs,
-    compute_mode_resolution,
-)
-from face_swap import FaceSwapper, FaceSwapError, QualityMode
-from models.model_manager import check_models
-from utils.database import JobDB
-from backend.app.identity.validator import IdentityValidator
-from backend.app.confidence.scorer import PersonaForgeIntegrityScorer
-from backend.app.quality.assessor import FaceQualityAssessor
-from backend.app.quality.dashboard import generate_dashboard as quality_generate_dashboard
-from backend.app.selection.models import SelectionMode, MediaAnalysisResponse
-from backend.app.selection.engine import SmartFaceSelector
-from backend.app.selection.dashboard import generate_dashboard as selection_generate_dashboard
-from backend.app.models.restoration.factory import RestorationFactory
 from backend.app.analytics.router import router as analytics_router
+from backend.app.confidence.scorer import PersonaForgeIntegrityScorer
+from backend.app.identity.validator import IdentityValidator
+from backend.app.models.restoration.factory import RestorationFactory
+from backend.app.quality.assessor import FaceQualityAssessor
+from backend.app.quality.dashboard import (
+    generate_dashboard as quality_generate_dashboard,
+)
 from backend.app.realtime.router import router as realtime_router
 from backend.app.security import (
-    validate_session_id,
-    sanitize_filename,
-    validate_media_magic_bytes,
-    validate_file_security,
     RetentionManager,
+    sanitize_filename,
+    validate_file_security,
+    validate_media_magic_bytes,
+    validate_session_id,
 )
 from backend.app.security.router import router as security_router
+from backend.app.selection.dashboard import (
+    generate_dashboard as selection_generate_dashboard,
+)
+from backend.app.selection.engine import SmartFaceSelector
+from backend.app.selection.models import SelectionMode
+from face_swap import FaceSwapError, FaceSwapper, QualityMode
+from models.model_manager import check_models
+from utils.database import JobDB
+from video_utils import (
+    cleanup_temp_dirs,
+    compute_mode_resolution,
+    extract_audio,
+    get_file_size_mb,
+    get_video_info,
+    mux_audio,
+    resize_video,
+)
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -68,11 +73,11 @@ logging.basicConfig(
 logger = logging.getLogger("personaforge.main")
 
 # ─── Directories ───────────────────────────────────────────────────────────────
-BASE_DIR    = Path(__file__).parent
+BASE_DIR = Path(__file__).parent
 UPLOADS_DIR = BASE_DIR / "uploads"
-FRAMES_DIR  = BASE_DIR / "temp_frames"
+FRAMES_DIR = BASE_DIR / "temp_frames"
 OUTPUTS_DIR = BASE_DIR / "outputs"
-STATIC_DIR  = BASE_DIR / "static"
+STATIC_DIR = BASE_DIR / "static"
 
 for d in [UPLOADS_DIR, FRAMES_DIR, OUTPUTS_DIR, STATIC_DIR]:
     d.mkdir(parents=True, exist_ok=True)
@@ -87,42 +92,46 @@ retention_manager = RetentionManager(base_dir=BASE_DIR, retention_hours=RETENTIO
 # Semaphore to limit concurrent heavy processing tasks (1 per system)
 process_semaphore = asyncio.Semaphore(1)
 
+
 def _new_job(session_id: str, kind: str) -> str:
     """Create a new job entry in SQLite."""
     job_id = uuid.uuid4().hex
     job_data = {
-        "id":              job_id,
-        "session_id":      session_id,
-        "kind":            kind,          # "preview" | "full"
-        "status":          "queued",
-        "stage":           "queued",
-        "progress":        0,
-        "message":         "Job queued",
-        "output":          None,
-        "file_size_mb":    None,
-        "device":          None,
-        "mode":            None,
+        "id": job_id,
+        "session_id": session_id,
+        "kind": kind,  # "preview" | "full"
+        "status": "queued",
+        "stage": "queued",
+        "progress": 0,
+        "message": "Job queued",
+        "output": None,
+        "file_size_mb": None,
+        "device": None,
+        "mode": None,
         "similarity_score": None,
-        "orientation":     None,
-        "input_width":     None,
-        "input_height":    None,
-        "resize_mode":     "maintain",
-        "created_at":      datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "orientation": None,
+        "input_width": None,
+        "input_height": None,
+        "resize_mode": "maintain",
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     db.insert_job(job_data)
     return job_id
+
 
 def _update(job_id: str, status: str, stage: str, progress: int, message: str, **extra):
     updates = dict(status=status, stage=stage, progress=progress, message=message, **extra)
     db.update_job(job_id, updates)
     logger.info("[%s] %d%% [%s] %s", job_id[:8], progress, stage, message)
 
+
 # ─── Quality → bitrate & target height map ─────────────────────────────────────
 _QUALITY_CONFIG = {
-    "fast":     {"height": 480, "bitrate": "2M"},
+    "fast": {"height": 480, "bitrate": "2M"},
     "balanced": {"height": 720, "bitrate": "6M"},
-    "high":     {"height": 0,   "bitrate": "12M"},  # 0 = original resolution
+    "high": {"height": 0, "bitrate": "12M"},  # 0 = original resolution
 }
+
 
 # ─── Auto Cleanup Task ────────────────────────────────────────────────────────
 async def auto_cleanup_loop():
@@ -171,6 +180,7 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, "cleanup_task"):
         app.state.cleanup_task.cancel()
 
+
 # ─── FastAPI App ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="PersonaForge AI",
@@ -186,9 +196,9 @@ app.include_router(realtime_router)
 app.include_router(security_router)
 
 
-
 ALLOWED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 ALLOWED_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+
 
 def _check_ext(filename: str, allowed: set, label: str) -> str:
     ext = Path(filename).suffix.lower()
@@ -198,6 +208,7 @@ def _check_ext(filename: str, allowed: set, label: str) -> str:
 
 
 # ─── Routes ────────────────────────────────────────────────────────────────────
+
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_frontend():
@@ -220,7 +231,7 @@ async def _stream_upload_to_disk(upload_file: UploadFile, dest_path: Path, max_b
             if total_written > max_bytes:
                 out.close()
                 dest_path.unlink(missing_ok=True)
-                raise HTTPException(413, f"Uploaded file exceeds limit of {max_bytes // (1024*1024)}MB.")
+                raise HTTPException(413, f"Uploaded file exceeds limit of {max_bytes // (1024 * 1024)}MB.")
             out.write(chunk)
     if total_written == 0:
         dest_path.unlink(missing_ok=True)
@@ -236,14 +247,14 @@ async def upload_files(
     _check_ext(image.filename, ALLOWED_IMAGE_EXTS, "image")
     _check_ext(video.filename, ALLOWED_VIDEO_EXTS, "video")
 
-    session_id  = uuid.uuid4().hex
+    session_id = uuid.uuid4().hex
     session_dir = UPLOADS_DIR / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
 
     safe_img_name = sanitize_filename(image.filename, "source_face.jpg")
-    img_ext  = Path(safe_img_name).suffix.lower() or ".jpg"
+    img_ext = Path(safe_img_name).suffix.lower() or ".jpg"
     img_path = session_dir / f"source_face{img_ext}"
-    MAX_IMG_SIZE = 50 * 1024 * 1024   # 50 MB
+    MAX_IMG_SIZE = 50 * 1024 * 1024  # 50 MB
     MAX_VID_SIZE = 500 * 1024 * 1024  # 500 MB
 
     img_size = await _stream_upload_to_disk(image, img_path, MAX_IMG_SIZE)
@@ -253,7 +264,7 @@ async def upload_files(
         raise HTTPException(400, f"Invalid image file: {img_err}")
 
     safe_vid_name = sanitize_filename(video.filename, "target_video.mp4")
-    vid_ext  = Path(safe_vid_name).suffix.lower() or ".mp4"
+    vid_ext = Path(safe_vid_name).suffix.lower() or ".mp4"
     vid_path = session_dir / f"target_video{vid_ext}"
 
     vid_size = await _stream_upload_to_disk(video, vid_path, MAX_VID_SIZE)
@@ -269,40 +280,51 @@ async def upload_files(
     except Exception as e:
         info = {"error": str(e)}
 
-    return JSONResponse({
-        "session_id":  session_id,
-        "image_path":  str(img_path),
-        "video_path":  str(vid_path),
-        "video_info":  info,
-        "message":     "Upload successful. Use /preview or /process to continue.",
-    })
+    return JSONResponse(
+        {
+            "session_id": session_id,
+            "image_path": str(img_path),
+            "video_path": str(vid_path),
+            "video_info": info,
+            "message": "Upload successful. Use /preview or /process to continue.",
+        }
+    )
 
 
-@app.post("/preview", summary="Generate a short preview clip (first 3–5 s)")
+@app.post("/preview", summary="Generate a short preview clip (first 3-5 s)")
 async def preview_faceswap(
     background_tasks: BackgroundTasks,
     session_id: str = Query(...),
-    quality:    str = Query("balanced", enum=["fast", "balanced", "high"]),
+    quality: str = Query("balanced", enum=["fast", "balanced", "high"]),
     face_index: int = Query(-1, description="-1=all faces, 0..n=specific face"),
-    target_face_id: Optional[str] = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
-    duration:   float = Query(4.0, description="Preview duration in seconds"),
+    target_face_id: str | None = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
+    duration: float = Query(4.0, description="Preview duration in seconds"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
-    restoration: Optional[str] = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
+    restoration: str | None = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
 ):
-    session_dir, img_path, vid_path = _resolve_session(session_id)
+    _session_dir, img_path, vid_path = _resolve_session(session_id)
     job_id = _new_job(session_id, "preview")
     background_tasks.add_task(
         _run_pipeline,
         swapper=app.state.swapper,
-        job_id=job_id, session_id=session_id,
-        img_path=img_path, vid_path=vid_path,
-        quality=quality, face_index=face_index,
+        job_id=job_id,
+        session_id=session_id,
+        img_path=img_path,
+        vid_path=vid_path,
+        quality=quality,
+        face_index=face_index,
         target_face_id=target_face_id,
         preview_seconds=duration,
         resize_mode=resize_mode,
         restoration=restoration,
     )
-    logger.info("Preview job %s queued for session %s (target=%s, restoration=%s)", job_id, session_id, target_face_id or face_index, restoration)
+    logger.info(
+        "Preview job %s queued for session %s (target=%s, restoration=%s)",
+        job_id,
+        session_id,
+        target_face_id or face_index,
+        restoration,
+    )
     return JSONResponse({"job_id": job_id, "message": "Preview started. Poll /status/{job_id}."})
 
 
@@ -310,26 +332,35 @@ async def preview_faceswap(
 async def process_faceswap(
     background_tasks: BackgroundTasks,
     session_id: str = Query(...),
-    quality:    str = Query("balanced", enum=["fast", "balanced", "high"]),
+    quality: str = Query("balanced", enum=["fast", "balanced", "high"]),
     face_index: int = Query(-1),
-    target_face_id: Optional[str] = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
+    target_face_id: str | None = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
-    restoration: Optional[str] = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
+    restoration: str | None = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
 ):
-    session_dir, img_path, vid_path = _resolve_session(session_id)
+    _session_dir, img_path, vid_path = _resolve_session(session_id)
     job_id = _new_job(session_id, "full")
     background_tasks.add_task(
         _run_pipeline,
         swapper=app.state.swapper,
-        job_id=job_id, session_id=session_id,
-        img_path=img_path, vid_path=vid_path,
-        quality=quality, face_index=face_index,
+        job_id=job_id,
+        session_id=session_id,
+        img_path=img_path,
+        vid_path=vid_path,
+        quality=quality,
+        face_index=face_index,
         target_face_id=target_face_id,
         preview_seconds=None,
         resize_mode=resize_mode,
         restoration=restoration,
     )
-    logger.info("Full job %s queued for session %s (target=%s, restoration=%s)", job_id, session_id, target_face_id or face_index, restoration)
+    logger.info(
+        "Full job %s queued for session %s (target=%s, restoration=%s)",
+        job_id,
+        session_id,
+        target_face_id or face_index,
+        restoration,
+    )
     return JSONResponse({"job_id": job_id, "message": "Processing started. Poll /status/{job_id}."})
 
 
@@ -342,12 +373,15 @@ async def cancel_job(job_id: str):
     if status in ("done", "completed", "error", "failed", "cancelled"):
         return JSONResponse({"status": status, "message": f"Job is already {status}."})
 
-    db.update_job(job_id, {
-        "status": "cancelled",
-        "stage": "cancelled",
-        "message": "Job cancelled by user request.",
-        "completed_at": datetime.now(timezone.utc).isoformat(),
-    })
+    db.update_job(
+        job_id,
+        {
+            "status": "cancelled",
+            "stage": "cancelled",
+            "message": "Job cancelled by user request.",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
     logger.info("Job %s marked as cancelled by user request.", job_id[:8])
     return JSONResponse({"status": "cancelled", "job_id": job_id, "message": "Job cancellation initiated."})
 
@@ -376,18 +410,22 @@ async def list_jobs(limit: int = Query(20, ge=1, le=100)):
 
 @app.get("/download/{filename}", summary="Download an output video")
 async def download_video(filename: str):
-    safe_name   = Path(filename).name
+    safe_name = Path(filename).name
     output_path = OUTPUTS_DIR / safe_name
     if not output_path.exists():
         raise HTTPException(404, f"Output file '{safe_name}' not found.")
     return FileResponse(str(output_path), media_type="video/mp4", filename=safe_name)
 
+
 @app.get("/identity/report/{job_id}", summary="Get identity consistency report for a job")
 async def get_identity_report(job_id: str):
     report_path = OUTPUTS_DIR / "reports" / f"identity_report_{job_id}.json"
     if not report_path.exists():
-        raise HTTPException(404, f"Identity report for job '{job_id}' not found. It might still be processing or failed.")
+        raise HTTPException(
+            404, f"Identity report for job '{job_id}' not found. It might still be processing or failed."
+        )
     return FileResponse(str(report_path), media_type="application/json", filename=report_path.name)
+
 
 @app.get("/identity/chart/{job_id}", summary="Get interactive identity consistency chart HTML")
 async def get_identity_chart(job_id: str):
@@ -396,14 +434,15 @@ async def get_identity_chart(job_id: str):
         raise HTTPException(404, f"Identity chart for job '{job_id}' not found.")
     return FileResponse(str(chart_path), media_type="text/html", filename=chart_path.name)
 
+
 @app.post("/integrity/evaluate", summary="Evaluate composite PersonaForge Integrity Score")
 async def evaluate_integrity(
     job_id: str = Query(..., description="Job ID"),
     cosine_similarity: float = Query(..., description="ArcFace cosine similarity (typically 0.0 - 1.0)"),
     laplacian_variance: float = Query(..., description="Laplacian variance edge focus (typically 5 - 1200)"),
     jitter_iod: float = Query(0.02, description="Landmark jitter normalized by IOD (typically 0.0 - 0.20)"),
-    boundary_ratio: Optional[float] = Query(None, description="Boundary gradient ratio"),
-    det_score: Optional[float] = Query(None, description="Face detector confidence"),
+    boundary_ratio: float | None = Query(None, description="Boundary gradient ratio"),
+    det_score: float | None = Query(None, description="Face detector confidence"),
 ):
     report = PersonaForgeIntegrityScorer.evaluate(
         job_id=job_id,
@@ -414,6 +453,7 @@ async def evaluate_integrity(
         det_score=det_score,
     )
     return JSONResponse(report.model_dump())
+
 
 @app.get("/integrity/report/{job_id}", summary="Get or compute integrity report for a job")
 async def get_integrity_report(job_id: str):
@@ -432,8 +472,8 @@ async def get_integrity_report(job_id: str):
         try:
             id_data = json.loads(id_report_path.read_text(encoding="utf-8"))
             sim_score = float(id_data.get("average_similarity", 0.70))
-        except Exception:
-            pass
+        except (json.JSONDecodeError, ValueError, OSError) as e:
+            logger.debug("Could not parse identity data: %s", e)
     elif job and job.get("similarity_score") is not None:
         sim_score = float(job["similarity_score"])
 
@@ -447,38 +487,41 @@ async def get_integrity_report(job_id: str):
     )
     return JSONResponse(report.model_dump())
 
+
 @app.post("/quality/assess", summary="Assess face image quality")
 async def assess_face_quality(
     image: UploadFile = File(..., description="Face image to assess"),
 ):
     _check_ext(image.filename, ALLOWED_IMAGE_EXTS, "image")
-    
+
     img_data = await image.read()
     if not img_data:
         raise HTTPException(400, "Uploaded image is empty.")
-        
-    session_id  = uuid.uuid4().hex
+
+    session_id = uuid.uuid4().hex
     img_path = UPLOADS_DIR / f"temp_quality_{session_id}{Path(image.filename).suffix.lower()}"
     img_path.write_bytes(img_data)
-    
+
     try:
         # Use global swapper app if initialized, else Assessor handles it gracefully
-        assessor = FaceQualityAssessor(face_analysis_app=app.state.swapper._app if hasattr(app.state, 'swapper') else None)
+        assessor = FaceQualityAssessor(
+            face_analysis_app=app.state.swapper._app if hasattr(app.state, "swapper") else None
+        )
         report = assessor.assess_image(str(img_path))
-        
+
         # Generate Dashboard
         reports_dir = OUTPUTS_DIR / "reports"
         dashboard_path = quality_generate_dashboard(report, reports_dir, session_id)
-        
-        return JSONResponse({
-            "report": report.model_dump(),
-            "dashboard_url": f"/quality/dashboard/{dashboard_path.name}"
-        })
-    except Exception as e:
-        logger.error(f"Failed to assess image quality: {e}")
-        raise HTTPException(500, f"Error assessing image: {str(e)}")
+
+        return JSONResponse(
+            {"report": report.model_dump(), "dashboard_url": f"/quality/dashboard/{dashboard_path.name}"}
+        )
+    except (ValueError, RuntimeError, OSError) as e:
+        logger.error("Failed to assess image quality: %s", e)
+        raise HTTPException(500, f"Error assessing image: {e!s}") from e
     finally:
         img_path.unlink(missing_ok=True)
+
 
 @app.get("/quality/dashboard/{filename}", summary="Get face quality dashboard HTML")
 async def get_quality_dashboard(filename: str):
@@ -488,17 +531,18 @@ async def get_quality_dashboard(filename: str):
         raise HTTPException(404, "Dashboard not found.")
     return FileResponse(str(dashboard_path), media_type="text/html", filename=safe_name)
 
+
 @app.post("/media/analyze", summary="Analyze video stream metadata, detect identities, and diagnose quality")
 async def analyze_media_endpoint(
-    video: Optional[UploadFile] = File(None, description="Video to analyze (optional if session_id is provided)"),
-    session_id: Optional[str] = Query(None, description="Session ID of already uploaded video"),
+    video: UploadFile | None = File(None, description="Video to analyze (optional if session_id is provided)"),
+    session_id: str | None = Query(None, description="Session ID of already uploaded video"),
     mode: SelectionMode = Query(SelectionMode.LARGEST, description="Ranking mode"),
     sample_rate_hz: float = Query(1.0, description="Sampling rate in Hz (default: 1 frame/sec)"),
 ):
     if not video and not session_id:
         raise HTTPException(400, "Either 'video' file or 'session_id' must be provided.")
 
-    temp_vid_path: Optional[Path] = None
+    temp_vid_path: Path | None = None
     target_vid_path: str = ""
     resolved_session_id = session_id or uuid.uuid4().hex
 
@@ -520,7 +564,7 @@ async def analyze_media_endpoint(
         raise HTTPException(400, "No video file provided.")
 
     try:
-        app_state_swapper_app = app.state.swapper._app if hasattr(app.state, 'swapper') else None
+        app_state_swapper_app = app.state.swapper._app if hasattr(app.state, "swapper") else None
         thumbnails_dir = OUTPUTS_DIR / "selection_thumbnails"
         selector = SmartFaceSelector(face_analysis_app=app_state_swapper_app, output_dir=thumbnails_dir)
 
@@ -553,9 +597,9 @@ async def analyze_media_endpoint(
         return JSONResponse(report.model_dump())
     except HTTPException:
         raise
-    except Exception as e:
+    except (ValueError, RuntimeError, OSError) as e:
         logger.error("Failed to analyze media: %s", e)
-        raise HTTPException(500, f"Error analyzing media: {str(e)}")
+        raise HTTPException(500, f"Error analyzing media: {e!s}") from e
     finally:
         if temp_vid_path and not session_id:
             temp_vid_path.unlink(missing_ok=True)
@@ -594,6 +638,7 @@ async def get_selection_thumbnail(filename: str):
 
 # ─── Session Resolver ──────────────────────────────────────────────────────────
 
+
 def _resolve_session(session_id: str) -> tuple[Path, str, str]:
     if not validate_session_id(session_id):
         raise HTTPException(400, "Invalid session ID format.")
@@ -611,18 +656,19 @@ def _resolve_session(session_id: str) -> tuple[Path, str, str]:
 
 # ─── Background Pipeline ───────────────────────────────────────────────────────
 
+
 async def _run_pipeline(
-    swapper:         FaceSwapper,
-    job_id:          str,
-    session_id:      str,
-    img_path:        str,
-    vid_path:        str,
-    quality:         str  = "balanced",
-    face_index:      int  = -1,
-    target_face_id:  Optional[str] = None,
-    preview_seconds: Optional[float] = None,
-    resize_mode:     str = "maintain",
-    restoration:     Optional[str] = "none",
+    swapper: FaceSwapper,
+    job_id: str,
+    session_id: str,
+    img_path: str,
+    vid_path: str,
+    quality: str = "balanced",
+    face_index: int = -1,
+    target_face_id: str | None = None,
+    preview_seconds: float | None = None,
+    resize_mode: str = "maintain",
+    restoration: str | None = "none",
 ):
     """
     Unified preview + full processing pipeline.
@@ -630,10 +676,10 @@ async def _run_pipeline(
     Preview mode:  preview_seconds=N  → extracts only first N seconds of frames.
     Full mode:     preview_seconds=None → extracts all frames.
     """
-    qcfg    = _QUALITY_CONFIG.get(quality, _QUALITY_CONFIG["balanced"])
-    qmode   = QualityMode(quality)
+    qcfg = _QUALITY_CONFIG.get(quality, _QUALITY_CONFIG["balanced"])
+    qmode = QualityMode(quality)
     bitrate = qcfg["bitrate"]
-    height  = qcfg["height"]
+    height = qcfg["height"]
     is_preview = preview_seconds is not None
 
     def upd(stage, progress, message, status="running", **extra):
@@ -652,9 +698,9 @@ async def _run_pipeline(
                 return
 
             # ── Get swapper info ───────────────────────────────────────────
-            device  = swapper.get_execution_provider()
-            mode    = swapper.get_mode()   # 'gpu' | 'cpu'
-            
+            device = swapper.get_execution_provider()
+            mode = swapper.get_mode()  # 'gpu' | 'cpu'
+
             db_updates = {
                 "device": device,
                 "mode": mode,
@@ -669,7 +715,7 @@ async def _run_pipeline(
 
             # ── CPU override: allow up to 720p + 3M, but still slower than GPU ───
             if mode == "cpu":
-                height  = min(height, 720) if height > 0 else 720
+                height = min(height, 720) if height > 0 else 720
                 bitrate = "3M"
                 upd("analyzing", 11, "Running in CPU mode (720p limit)…", status="analyzing")
             else:
@@ -682,11 +728,14 @@ async def _run_pipeline(
             in_w = int(info.get("width", 0) or 0)
             in_h = int(info.get("height", 0) or 0)
             orientation = info.get("orientation", "unknown")
-            db.update_job(job_id, {
-                "input_width": in_w,
-                "input_height": in_h,
-                "orientation": orientation,
-            })
+            db.update_job(
+                job_id,
+                {
+                    "input_width": in_w,
+                    "input_height": in_h,
+                    "orientation": orientation,
+                },
+            )
             resized_path = vid_path
             target_w, target_h = compute_mode_resolution(in_w, in_h, height)
             need_resize = (target_h > 0 and target_h < in_h) or (resize_mode == "crop_portrait")
@@ -702,15 +751,13 @@ async def _run_pipeline(
             if not is_preview:
                 upd("analyzing", 16, "Extracting audio track…", status="analyzing")
                 audio_dir = str(OUTPUTS_DIR / f"{job_id}_audio")
-                audio_path = await loop.run_in_executor(
-                    None, extract_audio, resized_path, audio_dir
-                )
-            
+                audio_path = await loop.run_in_executor(None, extract_audio, resized_path, audio_dir)
+
             total_frames = info.get("total_frames", 0)
             fps = info.get("fps", 30.0)
             if is_preview and preview_seconds is not None:
                 total_frames = min(total_frames, int(fps * preview_seconds))
-            
+
             upd("analyzing", 25, f"Ready to process {total_frames} frames in memory.", status="analyzing")
 
             # ── Check cancellation ──
@@ -727,7 +774,7 @@ async def _run_pipeline(
 
             # ── Similarity check ──────────────────────────────────────────────
             upd("analyzing", 34, "Checking baseline face similarity…", status="analyzing")
-            
+
             cap = cv2.VideoCapture(resized_path)
             sim_score = 0.0
             if cap.isOpened():
@@ -749,10 +796,10 @@ async def _run_pipeline(
                 return
 
             # ── Face swap (Stage 2: PROCESSING) ────────────────────────────────
-            kind_tag   = "preview" if is_preview else "output"
-            out_file   = f"personaforge_{kind_tag}_{session_id[:8]}_{job_id[:8]}.mp4"
-            out_path   = str(OUTPUTS_DIR / out_file)
-            
+            kind_tag = "preview" if is_preview else "output"
+            out_file = f"personaforge_{kind_tag}_{session_id[:8]}_{job_id[:8]}.mp4"
+            out_path = str(OUTPUTS_DIR / out_file)
+
             stage_label = "enhancing" if qmode != QualityMode.FAST else "processing"
             upd(stage_label, 36, f"Swapping faces on {device}…", status="processing")
             prog_start, prog_end = 36, 78
@@ -774,7 +821,7 @@ async def _run_pipeline(
                     except Exception as exc:
                         logger.warning("[%s] Could not load target embedding: %s", job_id[:8], exc)
 
-            swapped, skipped = await loop.run_in_executor(
+            swapped, _ = await loop.run_in_executor(
                 None,
                 partial(
                     swapper.process_video_optimized,
@@ -803,9 +850,14 @@ async def _run_pipeline(
 
             if swapped == 0:
                 raise FaceSwapError("No faces found in target video.")
-                
+
             # ── Stage 3: VALIDATING ───────────────────────────────────────────
-            upd("validating", 82, "Validating identity preservation and computing boundary coherence…", status="validating")
+            upd(
+                "validating",
+                82,
+                "Validating identity preservation and computing boundary coherence…",
+                status="validating",
+            )
             reports_dir = OUTPUTS_DIR / "reports"
             await loop.run_in_executor(None, identity_validator.save_report, reports_dir)
             await loop.run_in_executor(None, identity_validator.generate_visual_charts, reports_dir)
@@ -827,24 +879,25 @@ async def _run_pipeline(
             if not is_preview and audio_path:
                 upd("encoding", 88, "Multiplexing audio and encoding final video stream…", status="encoding")
                 final_out = out_path.replace(".mp4", "_final.mp4")
-                await loop.run_in_executor(
-                    None, mux_audio, out_path, audio_path, final_out
-                )
+                await loop.run_in_executor(None, mux_audio, out_path, audio_path, final_out)
                 out_path = final_out
 
             # ── Stage 5: COMPLETED ────────────────────────────────────────────
-            size_mb   = get_file_size_mb(out_path)
+            size_mb = get_file_size_mb(out_path)
             total_sec = time.perf_counter() - t_total
-            db.update_job(job_id, {
-                "status":       "done",
-                "stage":        "completed",
-                "progress":     100,
-                "message":      f"✓ Done in {total_sec:.1f}s! ({size_mb:.1f} MB)",
-                "output":       out_file,
-                "file_size_mb": round(size_mb, 2),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "processing_time_sec": round(total_sec, 2)
-            })
+            db.update_job(
+                job_id,
+                {
+                    "status": "done",
+                    "stage": "completed",
+                    "progress": 100,
+                    "message": f"✓ Done in {total_sec:.1f}s! ({size_mb:.1f} MB)",
+                    "output": out_file,
+                    "file_size_mb": round(size_mb, 2),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "processing_time_sec": round(total_sec, 2),
+                },
+            )
             logger.info("[%s] Job finished in %.1fs", job_id[:8], total_sec)
 
         except FaceSwapError as e:
@@ -852,29 +905,42 @@ async def _run_pipeline(
             if cur_job and cur_job.get("status") == "cancelled":
                 return
             total_sec = time.perf_counter() - t_total
-            db.update_job(job_id, {
-                "status": "error", "stage": "error", "message": str(e),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "processing_time_sec": round(total_sec, 2)
-            })
+            db.update_job(
+                job_id,
+                {
+                    "status": "error",
+                    "stage": "error",
+                    "message": str(e),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "processing_time_sec": round(total_sec, 2),
+                },
+            )
             logger.error("[%s] Pipeline error: %s", job_id[:8], e)
         except Exception as e:
             cur_job = db.get_job(job_id)
             if cur_job and cur_job.get("status") == "cancelled":
                 return
             total_sec = time.perf_counter() - t_total
-            db.update_job(job_id, {
-                "status": "error", "stage": "error", "message": f"System error: {e}",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "processing_time_sec": round(total_sec, 2)
-            })
+            db.update_job(
+                job_id,
+                {
+                    "status": "error",
+                    "stage": "error",
+                    "message": f"System error: {e}",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "processing_time_sec": round(total_sec, 2),
+                },
+            )
             logger.exception("[%s] Unexpected crash", job_id[:8])
         finally:
             # Robust cleanup of temporary assets
             clean_paths = []
-            if frames_dir: clean_paths.append(frames_dir)
-            if processed_dir: clean_paths.append(processed_dir)
-            if resized_path and resized_path != vid_path: clean_paths.append(resized_path)
+            if frames_dir:
+                clean_paths.append(frames_dir)
+            if processed_dir:
+                clean_paths.append(processed_dir)
+            if resized_path and resized_path != vid_path:
+                clean_paths.append(resized_path)
             if clean_paths:
                 cleanup_temp_dirs(*clean_paths)
                 logger.info("[%s] Cleaned temporary frames.", job_id[:8])
@@ -883,14 +949,15 @@ async def _run_pipeline(
 # ─── Entry Point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
+
     try:
         check_models(auto_download=False)
     except FileNotFoundError as exc:
         print(str(exc))
         raise SystemExit(1) from exc
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("  PersonaForge AI — Starting…")
     print("  Open: http://127.0.0.1:8000")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)

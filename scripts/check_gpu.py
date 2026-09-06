@@ -10,7 +10,6 @@ import onnxruntime as ort
 
 from face_swap import FaceSwapper
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("personaforge.gpu_check")
 

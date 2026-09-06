@@ -1,8 +1,11 @@
-import numpy as np
 import logging
+
+import numpy as np
+
 from backend.app.models.base import BaseSwapModel
 
 logger = logging.getLogger("personaforge.adapters.inswapper")
+
 
 class InSwapperAdapter(BaseSwapModel):
     def __init__(self):
@@ -12,6 +15,7 @@ class InSwapperAdapter(BaseSwapModel):
     def load_model(self, model_path: str, providers: list[str]) -> None:
         try:
             import insightface
+
             self._providers = providers
             self._model = insightface.model_zoo.get_model(model_path, providers=providers)
             logger.info("InSwapperAdapter: Model loaded from %s", model_path)
@@ -28,9 +32,7 @@ class InSwapperAdapter(BaseSwapModel):
         if target_face is None or source_face is None:
             return False
         # InSwapper requires insightface Face objects containing 'embedding' and 'kps'
-        if not hasattr(source_face, 'embedding') or not hasattr(target_face, 'kps'):
-            return False
-        return True
+        return bool(hasattr(source_face, "embedding") and hasattr(target_face, "kps"))
 
     def cleanup(self) -> None:
         self._model = None

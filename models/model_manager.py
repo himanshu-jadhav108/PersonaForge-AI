@@ -119,10 +119,7 @@ def download_model(name: str, overwrite: bool = False, timeout: int = 60) -> Pat
             last_error = exc
             print(f"\n[model] Warning: mirror {model_url} failed: {exc}. Trying next mirror...")
 
-    raise RuntimeError(
-        f"Failed to download model '{name}' from all available mirrors.\n"
-        f"Last error: {last_error}"
-    )
+    raise RuntimeError(f"Failed to download model '{name}' from all available mirrors.\nLast error: {last_error}")
 
 
 def check_models(auto_download: bool = False) -> None:

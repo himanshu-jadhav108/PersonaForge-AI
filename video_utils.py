@@ -112,15 +112,13 @@ def _portrait_crop_plan(width: int, height: int) -> tuple[str, int, int] | None:
 
 # ─── FFmpeg Helper ─────────────────────────────────────────────────────────────
 
+
 def _run_ffmpeg(cmd: list[str], label: str = "ffmpeg", timeout: int = 600) -> subprocess.CompletedProcess:
     logger.debug("[%s] Running: %s", label, " ".join(cmd))
     try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if result.returncode != 0:
-            raise RuntimeError(
-                f"[{label}] ffmpeg exited {result.returncode}.\n"
-                f"STDERR:\n{result.stderr[-3000:]}"
-            )
+            raise RuntimeError(f"[{label}] ffmpeg exited {result.returncode}.\nSTDERR:\n{result.stderr[-3000:]}")
         return result
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"[{label}] ffmpeg process timed out after {timeout}s.")
@@ -131,7 +129,8 @@ def _has_nvenc() -> bool:
     try:
         result = subprocess.run(
             ["ffmpeg", "-hide_banner", "-encoders"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            capture_output=True,
+            text=True,
             timeout=10,
         )
         return "h264_nvenc" in result.stdout
@@ -141,17 +140,22 @@ def _has_nvenc() -> bool:
 
 # ─── Video Info ────────────────────────────────────────────────────────────────
 
+
 def get_video_info(video_path: str) -> dict:
     """Return metadata (width, height, fps, duration, total_frames, codec) for a video."""
     cmd = [
-        "ffprobe", "-v", "quiet",
-        "-print_format", "json",
-        "-show_streams", "-show_format",
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_streams",
+        "-show_format",
         video_path,
     ]
     data = None
     try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
         if result.returncode != 0:
             raise RuntimeError(f"ffprobe failed: {result.stderr}")
         data = json.loads(result.stdout)
@@ -181,15 +185,11 @@ def get_video_info(video_path: str) -> dict:
 
     for stream in data.get("streams", []):
         if stream.get("codec_type") == "video":
-            info["width"]  = stream.get("width", 0)
+            info["width"] = stream.get("width", 0)
             info["height"] = stream.get("height", 0)
-            info["codec"]  = stream.get("codec_name", "unknown")
+            info["codec"] = stream.get("codec_name", "unknown")
             info["orientation"] = detect_orientation(info["width"], info["height"])
-            info["aspect_ratio"] = (
-                round(info["width"] / float(info["height"]), 4)
-                if info.get("height", 0)
-                else 0.0
-            )
+            info["aspect_ratio"] = round(info["width"] / float(info["height"]), 4) if info.get("height", 0) else 0.0
 
             raw_fps = stream.get("avg_frame_rate", "0/1")
             try:
@@ -199,20 +199,23 @@ def get_video_info(video_path: str) -> dict:
                 info["fps"] = 0.0
 
             dur = stream.get("duration") or data.get("format", {}).get("duration", 0)
-            info["duration"]     = float(dur or 0)
+            info["duration"] = float(dur or 0)
             info["total_frames"] = int(stream.get("nb_frames", 0) or 0)
             break
 
     logger.info(
         "Video info: %dx%d @ %.2f fps, %.1fs, codec=%s",
-        info.get("width", 0), info.get("height", 0),
-        info.get("fps", 0),   info.get("duration", 0),
+        info.get("width", 0),
+        info.get("height", 0),
+        info.get("fps", 0),
+        info.get("duration", 0),
         info.get("codec", "?"),
     )
     return info
 
 
 # ─── File Size Helper ──────────────────────────────────────────────────────────
+
 
 def get_file_size_mb(path: str) -> float:
     """Return file size in megabytes, or 0.0 if path doesn't exist."""
@@ -224,11 +227,12 @@ def get_file_size_mb(path: str) -> float:
 
 # ─── Resize ────────────────────────────────────────────────────────────────────
 
+
 def resize_video(
-    input_path:    str,
-    output_path:   str,
+    input_path: str,
+    output_path: str,
     target_height: int = 720,
-    resize_mode:   str = "maintain",
+    resize_mode: str = "maintain",
 ) -> str:
     """
     Resize/crop video with orientation-aware scaling.
@@ -290,14 +294,22 @@ def resize_video(
     )
     t0 = time.perf_counter()
     cmd = [
-        "ffmpeg", "-y",
-        "-i", input_path,
-        "-vf", ",".join(filters),
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "23",
-        "-c:a", "copy",
-        "-threads", "0",
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-vf",
+        ",".join(filters),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "23",
+        "-c:a",
+        "copy",
+        "-threads",
+        "0",
         output_path,
     ]
     _run_ffmpeg(cmd, f"resize_{target_height}p")
@@ -307,6 +319,7 @@ def resize_video(
 
 # ─── Audio Extraction ────────────────────────────────────────────────────────────
 
+
 def extract_audio(video_path: str, output_dir: str) -> str | None:
     """
     Extract the audio track from the video.
@@ -315,21 +328,30 @@ def extract_audio(video_path: str, output_dir: str) -> str | None:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     audio_path = str(out / "audio.aac")
-    
+
     try:
-        _run_ffmpeg([
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-vn", "-acodec", "copy",
-            audio_path,
-        ], "extract_audio")
+        _run_ffmpeg(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-vn",
+                "-acodec",
+                "copy",
+                audio_path,
+            ],
+            "extract_audio",
+        )
         logger.info("Audio extracted → %s", audio_path)
         return audio_path
     except RuntimeError:
         logger.info("No audio track found.")
         return None
 
+
 # ─── In-Memory Encoding (FFMPEG Pipe) ──────────────────────────────────────────
+
 
 def get_ffmpeg_writer(
     output_path: str,
@@ -344,43 +366,60 @@ def get_ffmpeg_writer(
     Return a subprocess.Popen object configured to read raw BGR frames from stdin.
     """
     use_nvenc = (not cpu_mode) and _has_nvenc()
-    
+
     # Ensure even dimensions for H.264 compatibility
     width = _even(width)
     height = _even(height)
 
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "rawvideo",
-        "-vcodec", "rawvideo",
-        "-s", f"{width}x{height}",
-        "-pix_fmt", "bgr24",
-        "-framerate", str(fps),
-        "-i", "-", # Read from stdin
+        "ffmpeg",
+        "-y",
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-s",
+        f"{width}x{height}",
+        "-pix_fmt",
+        "bgr24",
+        "-framerate",
+        str(fps),
+        "-i",
+        "-",  # Read from stdin
     ]
-    
+
     if use_nvenc:
         preset_nv = "p2" if is_preview else "p4"
         cmd += [
-            "-c:v", "h264_nvenc",
-            "-preset", preset_nv,
-            "-b:v", bitrate,
-            "-pix_fmt", "yuv420p",
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            preset_nv,
+            "-b:v",
+            bitrate,
+            "-pix_fmt",
+            "yuv420p",
         ]
     else:
         preset = "ultrafast" if is_preview else "medium"
         cmd += [
-            "-c:v", "libx264",
-            "-preset", preset,
-            "-b:v", bitrate,
-            "-pix_fmt", "yuv420p",
-            "-threads", "0",
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-b:v",
+            bitrate,
+            "-pix_fmt",
+            "yuv420p",
+            "-threads",
+            "0",
         ]
-        
+
     cmd.append(output_path)
-    
+
     logger.info("Starting FFMPEG writer: %s", " ".join(cmd))
     return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
 
 def mux_audio(video_path: str, audio_path: str | None, final_output_path: str) -> str:
     """
@@ -389,26 +428,36 @@ def mux_audio(video_path: str, audio_path: str | None, final_output_path: str) -
     t0 = time.perf_counter()
     if audio_path and Path(audio_path).exists():
         logger.info("Muxing audio: %s", audio_path)
-        _run_ffmpeg([
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-i", audio_path,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-shortest",
-            final_output_path,
-        ], "merge_audio")
+        _run_ffmpeg(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-i",
+                audio_path,
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-shortest",
+                final_output_path,
+            ],
+            "merge_audio",
+        )
         try:
             os.remove(video_path)
         except OSError:
             pass
     else:
         shutil.move(video_path, final_output_path)
-        
+
     logger.info("Output ready in %.2fs → %s", time.perf_counter() - t0, final_output_path)
     return final_output_path
 
+
 # ─── Cleanup ───────────────────────────────────────────────────────────────────
+
 
 def cleanup_temp_dirs(*dirs: str) -> None:
     for d in dirs:

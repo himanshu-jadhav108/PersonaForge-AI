@@ -26,6 +26,7 @@ class BenchmarkRunner:
         has_gputil = False
         try:
             import GPUtil
+
             has_gputil = True
         except ImportError:
             pass
@@ -37,6 +38,7 @@ class BenchmarkRunner:
 
             if has_gputil:
                 import GPUtil
+
                 gpus = GPUtil.getGPUs()
                 if gpus:
                     used_vram_mb = gpus[0].memoryUsed
@@ -44,8 +46,8 @@ class BenchmarkRunner:
 
             time.sleep(0.1)
 
-        stats['peak_ram_mb'] = peak_ram
-        stats['peak_vram_mb'] = peak_vram
+        stats["peak_ram_mb"] = peak_ram
+        stats["peak_vram_mb"] = peak_vram
 
     def run_benchmark(self, config: BenchmarkConfig, output_dir: Path) -> BenchmarkResult:
         print(f"Running benchmark {config.id}: {config.resolution}, {config.device}, Faces: {config.face_count}")
@@ -80,14 +82,27 @@ class BenchmarkRunner:
         identity_validator = IdentityValidator(job_id=job_id)
 
         class MockDB:
-            def update_job(self, *args, **kwargs): pass
-            def get_job(self, *args, **kwargs): return {}
+            def update_job(self, *args, **kwargs):
+                pass
+
+            def get_job(self, *args, **kwargs):
+                return {}
 
         qmode = QualityMode.FAST  # Benchmark baseline
         out_vid_path = output_dir / f"{job_id}_out.mp4"
 
         _swapped, _skipped = self.swapper.process_video_optimized(
-            source_face, str(vid_path), str(out_vid_path), qmode, -1, config.frames, 0, 100, MockDB(), job_id, identity_validator
+            source_face,
+            str(vid_path),
+            str(out_vid_path),
+            qmode,
+            -1,
+            config.frames,
+            0,
+            100,
+            MockDB(),
+            job_id,
+            identity_validator,
         )
 
         end_time = time.perf_counter()
@@ -118,6 +133,7 @@ class BenchmarkRunner:
         img_path.unlink(missing_ok=True)
         out_vid_path.unlink(missing_ok=True)
         import shutil
+
         shutil.rmtree(frames_dir, ignore_errors=True)
         shutil.rmtree(processed_dir, ignore_errors=True)
 
@@ -125,8 +141,8 @@ class BenchmarkRunner:
             config_id=config.id,
             processing_time_sec=round(processing_time, 2),
             fps=round(total_frames / processing_time, 2) if processing_time > 0 else 0.0,
-            peak_ram_mb=round(stats.get('peak_ram_mb', 0), 2),
-            peak_vram_mb=round(stats.get('peak_vram_mb', 0), 2),
+            peak_ram_mb=round(stats.get("peak_ram_mb", 0), 2),
+            peak_vram_mb=round(stats.get("peak_vram_mb", 0), 2),
             avg_identity_score=round(avg_id_score, 2),
             avg_quality_score=round(avg_quality_score, 2),
         )

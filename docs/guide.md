@@ -127,17 +127,17 @@ You can tweak the performance configurations for your hardware profile by modify
 If you run on a CPU and experience processing lag, tweak these settings to speed up processing:
 
 ```python
-PROCESS_EVERY_N_FRAMES = 3   # Skips intermediate frames using KCF tracking
-TARGET_HEIGHT = 720          # Forces downscaling to reduce pixels processed
-DET_SIZE = (320, 320)        # Restricts the detection window bounding box
+PROCESS_EVERY_N_FRAMES = 3  # Skips intermediate frames using KCF tracking
+TARGET_HEIGHT = 720  # Forces downscaling to reduce pixels processed
+DET_SIZE = (320, 320)  # Restricts the detection window bounding box
 ```
 
 ### GPU Performance Tuning (`config/config_gpu.py`)
 Optimize VRAM allocations and quality output on NVIDIA systems:
 
 ```python
-USE_SEAMLESS_CLONE = True    # Enables seamless Poisson edge blending
-BITRATE = "12M"              # Video output encoding bitrate
+USE_SEAMLESS_CLONE = True  # Enables seamless Poisson edge blending
+BITRATE = "12M"  # Video output encoding bitrate
 ```
 
 ---

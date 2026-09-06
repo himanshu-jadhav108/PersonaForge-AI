@@ -36,28 +36,32 @@ def generate_dashboard(report: QualityReport, output_dir: Path, image_name: str)
 
     fig = go.Figure()
 
-    fig.add_trace(go.Scatterpolar(
-        r=values,
-        theta=categories,
-        fill="toself",
-        name="Quality Metrics",
-        line_color="#6366f1",
-        fillcolor="rgba(99, 102, 241, 0.2)",
-    ))
+    fig.add_trace(
+        go.Scatterpolar(
+            r=values,
+            theta=categories,
+            fill="toself",
+            name="Quality Metrics",
+            line_color="#6366f1",
+            fillcolor="rgba(99, 102, 241, 0.2)",
+        )
+    )
 
     # Add recommendations as annotations
     annotations = []
     y_pos = -0.15
     for rec in report.recommendations:
-        annotations.append({
-            "x": 0.5,
-            "y": y_pos,
-            "xref": "paper",
-            "yref": "paper",
-            "text": f"💡 {rec}",
-            "showarrow": False,
-            "font": {"size": 12, "color": "#4b5563"},
-        })
+        annotations.append(
+            {
+                "x": 0.5,
+                "y": y_pos,
+                "xref": "paper",
+                "yref": "paper",
+                "text": f"💡 {rec}",
+                "showarrow": False,
+                "font": {"size": 12, "color": "#4b5563"},
+            }
+        )
         y_pos -= 0.05
 
     fig.update_layout(

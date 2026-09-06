@@ -59,60 +59,77 @@ class IdentityReportGenerator:
         else:
             frames = [r.frame_index for r in report.records]
             sims = [r.similarity_score for r in report.records]
-            rolling = [r.rolling_similarity if r.rolling_similarity is not None else r.similarity_score for r in report.records]
-            sudden_drop_x = [r.frame_index for r in report.records if getattr(r, 'sudden_drop', False)]
-            sudden_drop_y = [r.similarity_score for r in report.records if getattr(r, 'sudden_drop', False)]
+            rolling = [
+                r.rolling_similarity if r.rolling_similarity is not None else r.similarity_score for r in report.records
+            ]
+            sudden_drop_x = [r.frame_index for r in report.records if getattr(r, "sudden_drop", False)]
+            sudden_drop_y = [r.similarity_score for r in report.records if getattr(r, "sudden_drop", False)]
 
         fig = go.Figure()
 
         # 1. Background drift zones (Shaded horizontal bands)
         fig.add_hrect(
-            y0=stable_threshold, y1=1.0,
-            fillcolor="rgba(34, 197, 94, 0.12)", line_width=0,
-            annotation_text="Stable Zone (≥0.80)", annotation_position="top left",
+            y0=stable_threshold,
+            y1=1.0,
+            fillcolor="rgba(34, 197, 94, 0.12)",
+            line_width=0,
+            annotation_text="Stable Zone (≥0.80)",
+            annotation_position="top left",
         )
         fig.add_hrect(
-            y0=warning_threshold, y1=stable_threshold,
-            fillcolor="rgba(234, 179, 8, 0.12)", line_width=0,
-            annotation_text="Warning Zone (0.68–0.80)", annotation_position="left",
+            y0=warning_threshold,
+            y1=stable_threshold,
+            fillcolor="rgba(234, 179, 8, 0.12)",
+            line_width=0,
+            annotation_text="Warning Zone (0.68-0.80)",
+            annotation_position="left",
         )
         fig.add_hrect(
-            y0=0.0, y1=warning_threshold,
-            fillcolor="rgba(239, 68, 68, 0.12)", line_width=0,
-            annotation_text="Critical Drift Zone (<0.68)", annotation_position="bottom left",
+            y0=0.0,
+            y1=warning_threshold,
+            fillcolor="rgba(239, 68, 68, 0.12)",
+            line_width=0,
+            annotation_text="Critical Drift Zone (<0.68)",
+            annotation_position="bottom left",
         )
 
         # 2. Raw Cosine Similarity Trace
-        fig.add_trace(go.Scatter(
-            x=frames,
-            y=sims,
-            mode="lines+markers",
-            name="Frame Similarity",
-            line={"color": "#3b82f6", "width": 2},
-            marker={"size": 4},
-            hovertemplate="Frame %{x}<br>Similarity: %{y:.3f}<extra></extra>",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=frames,
+                y=sims,
+                mode="lines+markers",
+                name="Frame Similarity",
+                line={"color": "#3b82f6", "width": 2},
+                marker={"size": 4},
+                hovertemplate="Frame %{x}<br>Similarity: %{y:.3f}<extra></extra>",
+            )
+        )
 
         # 3. Rolling Moving Average Trace
-        fig.add_trace(go.Scatter(
-            x=frames,
-            y=rolling,
-            mode="lines",
-            name="Rolling Trend (5-frame)",
-            line={"color": "#8b5cf6", "width": 2, "dash": "dash"},
-            hovertemplate="Frame %{x}<br>Rolling Avg: %{y:.3f}<extra></extra>",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=frames,
+                y=rolling,
+                mode="lines",
+                name="Rolling Trend (5-frame)",
+                line={"color": "#8b5cf6", "width": 2, "dash": "dash"},
+                hovertemplate="Frame %{x}<br>Rolling Avg: %{y:.3f}<extra></extra>",
+            )
+        )
 
         # 4. Sudden Drop Markers (if any)
         if sudden_drop_x:
-            fig.add_trace(go.Scatter(
-                x=sudden_drop_x,
-                y=sudden_drop_y,
-                mode="markers",
-                name="Sudden Drop (Δ ≥ 0.20)",
-                marker={"color": "#ef4444", "size": 10, "symbol": "diamond"},
-                hovertemplate="Frame %{x}<br>Sudden Drop: %{y:.3f}<extra></extra>",
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=sudden_drop_x,
+                    y=sudden_drop_y,
+                    mode="markers",
+                    name="Sudden Drop (Δ ≥ 0.20)",
+                    marker={"color": "#ef4444", "size": 10, "symbol": "diamond"},
+                    hovertemplate="Frame %{x}<br>Sudden Drop: %{y:.3f}<extra></extra>",
+                )
+            )
 
         # 5. Threshold Guide Lines
         fig.add_hline(
@@ -131,7 +148,11 @@ class IdentityReportGenerator:
         )
 
         # Layout styling
-        status_label = "EXCELLENT" if report.identity_score >= 85 else ("STABLE" if not report.drift_detected else "DRIFT DETECTED")
+        status_label = (
+            "EXCELLENT"
+            if report.identity_score >= 85
+            else ("STABLE" if not report.drift_detected else "DRIFT DETECTED")
+        )
         fig.update_layout(
             title=(
                 f"PersonaForge Identity Consistency (Job: {report.job_id[:8]})<br>"

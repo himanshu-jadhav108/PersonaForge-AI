@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
-from typing import Optional
 from datetime import datetime
+
+from pydantic import BaseModel, Field
+
 
 class BenchmarkConfig(BaseModel):
     id: str = Field(..., description="Unique identifier for the benchmark run configuration")
@@ -10,6 +11,7 @@ class BenchmarkConfig(BaseModel):
     model_name: str = Field(default="inswapper_128.onnx", description="Swap model name")
     batch_size: int = Field(default=1, description="Simulated batch size")
     frames: int = Field(default=30, description="Number of frames processed")
+
 
 class BenchmarkResult(BaseModel):
     config_id: str

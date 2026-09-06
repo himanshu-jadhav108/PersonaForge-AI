@@ -108,9 +108,9 @@ def test_evaluate_three_components_baseline():
     # 0.40 * NormSim + 0.35 * NormSharp + 0.25 * NormStability
     report = PersonaForgeIntegrityScorer.evaluate(
         job_id="test_job_3comp",
-        cosine_similarity=0.70,     # NormSim = 100.0 (contrib = 40.0)
-        laplacian_variance=300.0,   # NormSharp = 100.0 (contrib = 35.0)
-        jitter_iod=0.0,             # NormStability = 100.0 (contrib = 25.0)
+        cosine_similarity=0.70,  # NormSim = 100.0 (contrib = 40.0)
+        laplacian_variance=300.0,  # NormSharp = 100.0 (contrib = 35.0)
+        jitter_iod=0.0,  # NormStability = 100.0 (contrib = 25.0)
     )
 
     assert report.integrity_score == 100.0
@@ -145,11 +145,11 @@ def test_evaluate_five_components_full():
 def test_evaluate_degraded_tier_and_warning_badges():
     report = PersonaForgeIntegrityScorer.evaluate(
         job_id="test_job_degraded",
-        cosine_similarity=0.25,     # Very low similarity
-        laplacian_variance=15.0,    # High blur
-        jitter_iod=0.19,            # High jitter
-        boundary_ratio=2.6,         # Seam artifact
-        det_score=0.40,             # Low detection confidence
+        cosine_similarity=0.25,  # Very low similarity
+        laplacian_variance=15.0,  # High blur
+        jitter_iod=0.19,  # High jitter
+        boundary_ratio=2.6,  # Seam artifact
+        det_score=0.40,  # Low detection confidence
     )
 
     assert report.tier == IntegrityTier.DEGRADED

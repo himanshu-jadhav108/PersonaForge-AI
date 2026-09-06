@@ -27,7 +27,9 @@ async def get_retention_stats():
 
 @router.post("/cleanup", response_model=RetentionCleanupReport, summary="Trigger storage and data retention cleanup")
 async def trigger_retention_cleanup(
-    retention_hours: float | None = Query(None, ge=0.0, description="Override retention threshold in hours (default: configured RETENTION_HOURS)"),
+    retention_hours: float | None = Query(
+        None, ge=0.0, description="Override retention threshold in hours (default: configured RETENTION_HOURS)"
+    ),
     force_all_temp: bool = Query(False, description="Whether to purge all temporary frames regardless of age"),
 ):
     """Purges expired uploads, outputs, temporary frames, and old SQLite job records."""
@@ -52,9 +54,11 @@ async def get_system_health():
     except (RuntimeError, FileNotFoundError, OSError) as exc:
         model_err = str(exc)
 
-    return JSONResponse({
-        "status": "healthy" if models_ok else "degraded",
-        "models_verified": models_ok,
-        "models_error": model_err,
-        "retention_hours": _retention_mgr.retention_hours,
-    })
+    return JSONResponse(
+        {
+            "status": "healthy" if models_ok else "degraded",
+            "models_verified": models_ok,
+            "models_error": model_err,
+            "retention_hours": _retention_mgr.retention_hours,
+        }
+    )

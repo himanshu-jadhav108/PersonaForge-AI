@@ -9,7 +9,7 @@ Nothing in this file alters GPU behaviour.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -24,14 +24,14 @@ def process_video_gpu(
     output_path: str,
     quality: QualityMode,
     face_index: int = -1,
-    max_frames: Optional[int] = None,
+    max_frames: int | None = None,
     progress_start: int = 40,
     progress_end: int = 80,
     db_manager=None,
-    job_id: Optional[str] = None,
+    job_id: str | None = None,
     identity_validator=None,
-    bitrate: Optional[str] = None,
-    target_embedding: Optional[np.ndarray] = None,
+    bitrate: str | None = None,
+    target_embedding: np.ndarray | None = None,
 ) -> tuple[int, int]:
     """
     Delegate to the original GPU processing loop unchanged.

@@ -5,9 +5,9 @@ from pydantic import BaseModel, Field
 
 class IntegrityTier(str, Enum):
     EXCELLENT = "EXCELLENT"  # >= 85: Studio grade, pristine match and sharpness
-    GOOD = "GOOD"            # 70 - 84: Clean swap, minor lighting or angle variation
-    FAIR = "FAIR"            # 50 - 69: Noticeable compression or moderate angle
-    DEGRADED = "DEGRADED"    # < 50: Severe blur, landmark jitter, or identity drift
+    GOOD = "GOOD"  # 70 - 84: Clean swap, minor lighting or angle variation
+    FAIR = "FAIR"  # 50 - 69: Noticeable compression or moderate angle
+    DEGRADED = "DEGRADED"  # < 50: Severe blur, landmark jitter, or identity drift
 
 
 class ComponentScore(BaseModel):
