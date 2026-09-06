@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -25,13 +27,30 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff
 
-      - name: Run Ruff Linter
+      - name: Run Ruff Linter & Formatter (changed files only)
         run: |
-          ruff check .
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+          fi
+          HEAD_SHA="${{ github.sha }}"
 
-      - name: Verify Formatting
-        run: |
-          ruff format --check .
+          if [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            mapfile -t changed_files < <(git ls-files "*.py")
+          else
+            mapfile -t changed_files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- "*.py")
+          fi
+
+          if [[ "${#changed_files[@]}" -eq 0 ]]; then
+            echo "No Python files changed; skipping Ruff checks."
+            exit 0
+          fi
+
+          echo "Running Ruff on changed Python files:"
+          printf ' - %s\n' "${changed_files[@]}"
+          ruff check "${changed_files[@]}"
+          ruff format --check "${changed_files[@]}"
 
   test:
     name: Test Suite (Python ${{ matrix.python-version }})
