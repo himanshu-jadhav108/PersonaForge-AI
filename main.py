@@ -50,6 +50,14 @@ from backend.app.selection.dashboard import generate_dashboard as selection_gene
 from backend.app.models.restoration.factory import RestorationFactory
 from backend.app.analytics.router import router as analytics_router
 from backend.app.realtime.router import router as realtime_router
+from backend.app.security import (
+    validate_session_id,
+    sanitize_filename,
+    validate_media_magic_bytes,
+    validate_file_security,
+    RetentionManager,
+)
+from backend.app.security.router import router as security_router
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -71,6 +79,10 @@ for d in [UPLOADS_DIR, FRAMES_DIR, OUTPUTS_DIR, STATIC_DIR]:
 
 # ─── Database Manager ─────────────────────────────────────────────────────────
 db = JobDB(str(BASE_DIR / "jobs.db"))
+
+# ─── Retention & Maintenance Manager ──────────────────────────────────────────
+RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
+retention_manager = RetentionManager(base_dir=BASE_DIR, retention_hours=RETENTION_HOURS, db=db)
 
 # Semaphore to limit concurrent heavy processing tasks (1 per system)
 process_semaphore = asyncio.Semaphore(1)
@@ -112,75 +124,24 @@ _QUALITY_CONFIG = {
     "high":     {"height": 0,   "bitrate": "12M"},  # 0 = original resolution
 }
 
-# ─── FastAPI App ───────────────────────────────────────────────────────────────
-# ─── App Lifespan ─────────────────────────────────────────────────────────────
-# ─── Configuration & Security ──────────────────────────────────────────────────
-RETENTION_HOURS = int(os.getenv("RETENTION_HOURS", "24"))
-SESSION_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
-
-def validate_session_id(session_id: str) -> bool:
-    """Validate session_id to prevent directory traversal or unexpected input."""
-    return bool(session_id and SESSION_ID_PATTERN.match(session_id))
-
-def validate_media_magic_bytes(file_path: Path, media_type: str) -> bool:
-    """Verify file magic bytes against expected headers."""
-    try:
-        with open(file_path, "rb") as f:
-            header = f.read(32)
-        if media_type == "image":
-            # JPEG: FF D8 FF
-            if header.startswith(b"\xff\xd8\xff"):
-                return True
-            # PNG: 89 50 4E 47
-            if header.startswith(b"\x89PNG\r\n\x1a\n"):
-                return True
-            # WEBP: RIFF .... WEBP
-            if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
-                return True
-            return False
-        elif media_type == "video":
-            # MP4 / MOV: check for ftyp box or moov/mdat
-            if b"ftyp" in header[:16] or b"moov" in header[:16] or b"mdat" in header[:16]:
-                return True
-            # Matroska / MKV / WebM: 1A 45 DF A3
-            if header.startswith(b"\x1a\x45\xdf\xa3"):
-                return True
-            # AVI: RIFF .... AVI
-            if header.startswith(b"RIFF") and header[8:12] == b"AVI ":
-                return True
-            return False
-    except Exception:
-        return False
-    return False
-
 # ─── Auto Cleanup Task ────────────────────────────────────────────────────────
 async def auto_cleanup_loop():
     """Background task to purge old files adhering to RETENTION_HOURS."""
     while True:
         try:
             logger.info("[cleanup] Starting periodic maintenance (retention=%dh)…", RETENTION_HOURS)
-            retention_sec = RETENTION_HOURS * 3600
-            
-            # 1. Clean temp frames (keep max 6 hours)
-            cleanup_temp_dirs(*[str(d) for d in FRAMES_DIR.glob("*") if time.time() - d.stat().st_mtime > 6 * 3600])
-            
-            # 2. Clean uploads (keep RETENTION_HOURS)
-            for p in UPLOADS_DIR.iterdir():
-                if time.time() - p.stat().st_mtime > retention_sec:
-                    if p.is_dir():
-                        cleanup_temp_dirs(str(p))
-                    else:
-                        p.unlink(missing_ok=True)
-            
-            # 3. Clean outputs (keep RETENTION_HOURS)
-            for p in OUTPUTS_DIR.iterdir():
-                if p.is_file() and time.time() - p.stat().st_mtime > retention_sec:
-                    p.unlink(missing_ok=True)
-                    
-            logger.info("[cleanup] Maintenance complete.")
+            report = retention_manager.perform_cleanup()
+            logger.info(
+                "[cleanup] Maintenance complete: freed %.2fMB across %d uploads, %d outputs, %d frame sets, %d jobs.",
+                report.freed_mb,
+                report.deleted_uploads,
+                report.deleted_outputs,
+                report.deleted_frames,
+                report.deleted_jobs,
+            )
         except Exception as e:
             logger.error("[cleanup] Error: %s", e)
-        
+
         await asyncio.sleep(3600)  # Sleep 1 hour
 
 
@@ -194,7 +155,7 @@ async def lifespan(app: FastAPI):
         # 2. Model validation
         check_models(auto_download=False)
         logger.info("[lifespan] Models validated on startup.")
-        
+
         # 3. Initialize Shared Swapper (Singleton — warm-up performed once inside FaceSwapper.__init__)
         logger.info("[lifespan] Initializing global FaceSwapper (this may take a moment)…")
         app.state.swapper = FaceSwapper()
@@ -222,6 +183,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(analytics_router)
 app.include_router(realtime_router)
+app.include_router(security_router)
 
 
 
@@ -278,23 +240,27 @@ async def upload_files(
     session_dir = UPLOADS_DIR / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    img_ext  = Path(image.filename).suffix.lower()
+    safe_img_name = sanitize_filename(image.filename, "source_face.jpg")
+    img_ext  = Path(safe_img_name).suffix.lower() or ".jpg"
     img_path = session_dir / f"source_face{img_ext}"
     MAX_IMG_SIZE = 50 * 1024 * 1024   # 50 MB
     MAX_VID_SIZE = 500 * 1024 * 1024  # 500 MB
 
     img_size = await _stream_upload_to_disk(image, img_path, MAX_IMG_SIZE)
-    if not validate_media_magic_bytes(img_path, "image"):
+    valid_img, img_err = validate_file_security(img_path, "image", MAX_IMG_SIZE)
+    if not valid_img:
         img_path.unlink(missing_ok=True)
-        raise HTTPException(400, "Invalid image format header or corrupted image.")
+        raise HTTPException(400, f"Invalid image file: {img_err}")
 
-    vid_ext  = Path(video.filename).suffix.lower()
+    safe_vid_name = sanitize_filename(video.filename, "target_video.mp4")
+    vid_ext  = Path(safe_vid_name).suffix.lower() or ".mp4"
     vid_path = session_dir / f"target_video{vid_ext}"
 
     vid_size = await _stream_upload_to_disk(video, vid_path, MAX_VID_SIZE)
-    if not validate_media_magic_bytes(vid_path, "video"):
+    valid_vid, vid_err = validate_file_security(vid_path, "video", MAX_VID_SIZE)
+    if not valid_vid:
         vid_path.unlink(missing_ok=True)
-        raise HTTPException(400, "Invalid video format header or corrupted video.")
+        raise HTTPException(400, f"Invalid video file: {vid_err}")
 
     logger.info("Session %s: image %d B, video %d B", session_id, img_size, vid_size)
 
@@ -373,13 +339,14 @@ async def cancel_job(job_id: str):
     if not job:
         raise HTTPException(404, "Job not found.")
     status = job.get("status")
-    if status in ("done", "error", "cancelled"):
+    if status in ("done", "completed", "error", "failed", "cancelled"):
         return JSONResponse({"status": status, "message": f"Job is already {status}."})
 
     db.update_job(job_id, {
         "status": "cancelled",
         "stage": "cancelled",
-        "message": "Job cancelled by user.",
+        "message": "Job cancelled by user request.",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
     })
     logger.info("Job %s marked as cancelled by user request.", job_id[:8])
     return JSONResponse({"status": "cancelled", "job_id": job_id, "message": "Job cancellation initiated."})
@@ -669,8 +636,8 @@ async def _run_pipeline(
     height  = qcfg["height"]
     is_preview = preview_seconds is not None
 
-    def upd(stage, progress, message, **extra):
-        _update(job_id, "running", stage, progress, message, **extra)
+    def upd(stage, progress, message, status="running", **extra):
+        _update(job_id, status, stage, progress, message, **extra)
 
     t_total = time.perf_counter()
     frames_dir = None
@@ -679,6 +646,11 @@ async def _run_pipeline(
 
     async with process_semaphore:
         try:
+            cur_job = db.get_job(job_id)
+            if cur_job and cur_job.get("status") == "cancelled":
+                logger.info("[%s] Pipeline execution skipped: job was cancelled.", job_id[:8])
+                return
+
             # ── Get swapper info ───────────────────────────────────────────
             device  = swapper.get_execution_provider()
             mode    = swapper.get_mode()   # 'gpu' | 'cpu'
@@ -693,18 +665,18 @@ async def _run_pipeline(
                 db_updates["restoration"] = restoration
                 db_updates["restoration_status"] = restorer_status.get("status_message")
             db.update_job(job_id, db_updates)
-            upd("processing", 10, f"Using {device} pipeline.", device=device)
+            upd("analyzing", 10, f"Using {device} pipeline.", status="analyzing", device=device)
 
             # ── CPU override: allow up to 720p + 3M, but still slower than GPU ───
             if mode == "cpu":
                 height  = min(height, 720) if height > 0 else 720
                 bitrate = "3M"
-                upd("processing", 11, "Running in CPU mode (720p limit)…")
+                upd("analyzing", 11, "Running in CPU mode (720p limit)…", status="analyzing")
             else:
-                upd("processing", 11, "Running in GPU mode…")
+                upd("analyzing", 11, "Running in GPU mode…", status="analyzing")
 
             # ── Resize ────────────────────────────────────────────────────────
-            upd("processing", 12, "Checking resolution…")
+            upd("analyzing", 12, "Checking resolution and stream metadata…", status="analyzing")
             loop = asyncio.get_event_loop()
             info = get_video_info(vid_path)
             in_w = int(info.get("width", 0) or 0)
@@ -720,38 +692,42 @@ async def _run_pipeline(
             need_resize = (target_h > 0 and target_h < in_h) or (resize_mode == "crop_portrait")
             if need_resize:
                 resized_path = vid_path.replace(Path(vid_path).suffix, f"_{target_h}p_{resize_mode}.mp4")
-                upd("processing", 14, f"Preparing {orientation} video ({target_w}x{target_h})…")
+                upd("analyzing", 14, f"Preparing {orientation} video ({target_w}x{target_h})…", status="analyzing")
                 await loop.run_in_executor(None, resize_video, vid_path, resized_path, target_h, resize_mode)
             else:
-                upd("processing", 14, f"Resolution OK ({in_w}x{in_h}).")
+                upd("analyzing", 14, f"Resolution OK ({in_w}x{in_h}).", status="analyzing")
 
             # ── Extract audio ──────────────────────────────────────────────────
             audio_path = None
             if not is_preview:
-                upd("processing", 16, "Extracting audio…")
+                upd("analyzing", 16, "Extracting audio track…", status="analyzing")
                 audio_dir = str(OUTPUTS_DIR / f"{job_id}_audio")
                 audio_path = await loop.run_in_executor(
                     None, extract_audio, resized_path, audio_dir
                 )
             
-            # Since we now use in-memory stream, we just pass the video path.
             total_frames = info.get("total_frames", 0)
             fps = info.get("fps", 30.0)
             if is_preview and preview_seconds is not None:
                 total_frames = min(total_frames, int(fps * preview_seconds))
             
-            upd("processing", 30, f"Ready to process {total_frames} frames in memory.")
+            upd("analyzing", 25, f"Ready to process {total_frames} frames in memory.", status="analyzing")
+
+            # ── Check cancellation ──
+            cur_job = db.get_job(job_id)
+            if cur_job and cur_job.get("status") == "cancelled":
+                logger.info("[%s] Pipeline execution halted: job was cancelled.", job_id[:8])
+                return
 
             # ── Source face ───────────────────────────────────────────────────
-            upd("processing", 32, "Analysing source face…")
+            upd("analyzing", 30, "Analyzing source face geometry…", status="analyzing")
             source_face = await loop.run_in_executor(None, swapper.get_source_face, img_path)
             if source_face is None:
                 raise FaceSwapError("No face detected in source image.")
 
             # ── Similarity check ──────────────────────────────────────────────
-            upd("processing", 34, "Checking face similarity…")
+            upd("analyzing", 34, "Checking baseline face similarity…", status="analyzing")
             
-            # Use source face for similarity check directly against the input video
             cap = cv2.VideoCapture(resized_path)
             sim_score = 0.0
             if cap.isOpened():
@@ -766,13 +742,19 @@ async def _run_pipeline(
                 cap.release()
             db.update_job(job_id, {"similarity_score": round(sim_score, 3)})
 
-            # ── Face swap ─────────────────────────────────────────────────────
+            # ── Check cancellation ──
+            cur_job = db.get_job(job_id)
+            if cur_job and cur_job.get("status") == "cancelled":
+                logger.info("[%s] Pipeline execution halted: job was cancelled.", job_id[:8])
+                return
+
+            # ── Face swap (Stage 2: PROCESSING) ────────────────────────────────
             kind_tag   = "preview" if is_preview else "output"
             out_file   = f"personaforge_{kind_tag}_{session_id[:8]}_{job_id[:8]}.mp4"
             out_path   = str(OUTPUTS_DIR / out_file)
             
-            stage_label   = "enhancing" if qmode != QualityMode.FAST else "processing"
-            upd(stage_label, 36, f"Swapping faces on {device}…")
+            stage_label = "enhancing" if qmode != QualityMode.FAST else "processing"
+            upd(stage_label, 36, f"Swapping faces on {device}…", status="processing")
             prog_start, prog_end = 36, 78
 
             identity_validator = IdentityValidator(job_id=job_id)
@@ -788,7 +770,7 @@ async def _run_pipeline(
                         if target_face_id in idents and idents[target_face_id].get("embedding"):
                             target_embedding = np.array(idents[target_face_id]["embedding"], dtype=np.float32)
                             lbl = idents[target_face_id].get("person_label", target_face_id)
-                            upd("processing", 35, f"Targeting {lbl} for face swap…")
+                            upd("processing", 35, f"Targeting {lbl} for face swap…", status="processing")
                     except Exception as exc:
                         logger.warning("[%s] Could not load target embedding: %s", job_id[:8], exc)
 
@@ -817,12 +799,13 @@ async def _run_pipeline(
                 logger.info("[%s] Pipeline execution halted: job was cancelled.", job_id[:8])
                 return
 
-            upd("rendering", 80, f"Swap complete ({swapped} swapped).")
+            upd("rendering", 80, f"Swap complete ({swapped} swapped).", status="processing")
 
             if swapped == 0:
                 raise FaceSwapError("No faces found in target video.")
                 
-            # Save identity and integrity reports
+            # ── Stage 3: VALIDATING ───────────────────────────────────────────
+            upd("validating", 82, "Validating identity preservation and computing boundary coherence…", status="validating")
             reports_dir = OUTPUTS_DIR / "reports"
             await loop.run_in_executor(None, identity_validator.save_report, reports_dir)
             await loop.run_in_executor(None, identity_validator.generate_visual_charts, reports_dir)
@@ -840,21 +823,21 @@ async def _run_pipeline(
             integ_path = reports_dir / f"integrity_report_{job_id}.json"
             integ_path.write_text(json.dumps(integrity_report.model_dump(), indent=2), encoding="utf-8")
 
-            # ── Audio ─────────────────────────────────────────────────────────
+            # ── Stage 4: ENCODING ─────────────────────────────────────────────
             if not is_preview and audio_path:
-                upd("rendering", 82, "Muxing final audio…")
+                upd("encoding", 88, "Multiplexing audio and encoding final video stream…", status="encoding")
                 final_out = out_path.replace(".mp4", "_final.mp4")
                 await loop.run_in_executor(
                     None, mux_audio, out_path, audio_path, final_out
                 )
                 out_path = final_out
 
-            # ── Done ──────────────────────────────────────────────────────────
+            # ── Stage 5: COMPLETED ────────────────────────────────────────────
             size_mb   = get_file_size_mb(out_path)
             total_sec = time.perf_counter() - t_total
             db.update_job(job_id, {
                 "status":       "done",
-                "stage":        "done",
+                "stage":        "completed",
                 "progress":     100,
                 "message":      f"✓ Done in {total_sec:.1f}s! ({size_mb:.1f} MB)",
                 "output":       out_file,
@@ -865,6 +848,9 @@ async def _run_pipeline(
             logger.info("[%s] Job finished in %.1fs", job_id[:8], total_sec)
 
         except FaceSwapError as e:
+            cur_job = db.get_job(job_id)
+            if cur_job and cur_job.get("status") == "cancelled":
+                return
             total_sec = time.perf_counter() - t_total
             db.update_job(job_id, {
                 "status": "error", "stage": "error", "message": str(e),
@@ -873,6 +859,9 @@ async def _run_pipeline(
             })
             logger.error("[%s] Pipeline error: %s", job_id[:8], e)
         except Exception as e:
+            cur_job = db.get_job(job_id)
+            if cur_job and cur_job.get("status") == "cancelled":
+                return
             total_sec = time.perf_counter() - t_total
             db.update_job(job_id, {
                 "status": "error", "stage": "error", "message": f"System error: {e}",

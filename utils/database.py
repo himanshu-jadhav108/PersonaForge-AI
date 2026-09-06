@@ -90,25 +90,60 @@ class JobDB:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_running_job(self) -> Optional[Dict[str, Any]]:
-        """Find any job that was left in 'running' or 'queued' state (recovery)."""
+        """Find any job that was left in an active processing or queued state."""
+        active_statuses = (
+            "running", "queued", "analyzing", "processing", "validating", "encoding"
+        )
+        placeholders = ", ".join(["?"] * len(active_statuses))
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT * FROM jobs WHERE status IN ('running', 'queued') ORDER BY created_at DESC LIMIT 1"
+                f"SELECT * FROM jobs WHERE status IN ({placeholders}) ORDER BY created_at DESC LIMIT 1",
+                active_statuses,
             )
             row = cursor.fetchone()
             return dict(row) if row else None
 
     def fail_stalled_jobs(self):
-        """Mark any 'running' or 'queued' jobs as failed (crash recovery)."""
+        """Mark any active or queued jobs as failed (crash recovery)."""
+        active_statuses = (
+            "running", "queued", "analyzing", "processing", "validating", "encoding"
+        )
+        placeholders = ", ".join(["?"] * len(active_statuses))
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "UPDATE jobs SET status = 'error', stage = 'error', message = 'Job stalled during system restart' "
-                "WHERE status IN ('running', 'queued')"
+                f"UPDATE jobs SET status = 'error', stage = 'error', message = 'Job stalled during system restart' "
+                f"WHERE status IN ({placeholders})",
+                active_statuses,
             )
             count = cursor.rowcount
             if count:
                 logger.info("Marked %d stalled jobs as failed.", count)
             conn.commit()
+
+    def delete_jobs_older_than(self, cutoff_iso: str) -> int:
+        """Delete jobs created before the given ISO timestamp."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff_iso,))
+            count = cursor.rowcount
+            conn.commit()
+            return count
+
+    def delete_job(self, job_id: str) -> bool:
+        """Delete a single job by id."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+            count = cursor.rowcount
+            conn.commit()
+            return count > 0
+
+    def count_jobs_by_status(self) -> dict[str, int]:
+        """Return a mapping of status -> count."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status")
+            return {row[0]: row[1] for row in cursor.fetchall()}
