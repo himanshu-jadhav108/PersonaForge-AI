@@ -1,0 +1,28 @@
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.venv
+venv
+*.egg-info
+
+# Local state & logs
+*.log
+jobs.db
+jobs.db-journal
+
+# Temporary media buffers
+temp_frames/*
+uploads/*
+outputs/*
+!uploads/.gitkeep
+!outputs/.gitkeep
+scratch/*
+.system_generated/*

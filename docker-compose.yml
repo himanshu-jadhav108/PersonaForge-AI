@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  # ----------------------------------------------------------------------------
+  # PersonaForge CPU Service (Default)
+  # ----------------------------------------------------------------------------
+  personaforge-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: cpu
+    container_name: personaforge-cpu
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+      - ./models:/app/models
+      - ./jobs.db:/app/jobs.db
+    environment:
+      - RETENTION_HOURS=24
+      - PORT=8000
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------------------
+  # PersonaForge GPU Service (NVIDIA CUDA Acceleration)
+  # Run with: docker compose --profile gpu up personaforge-gpu
+  # ----------------------------------------------------------------------------
+  personaforge-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: gpu
+    container_name: personaforge-gpu
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+      - ./models:/app/models
+      - ./jobs.db:/app/jobs.db
+    environment:
+      - RETENTION_HOURS=24
+      - PORT=8000
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    profiles:
+      - gpu
+    restart: unless-stopped
