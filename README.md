@@ -70,24 +70,52 @@ Unlike conventional cloud-tethered deepfake tools or naive scripts that write te
 
 Legacy architectures write temporary image frames to disk for every video frame processed, resulting in high write amplification and storage wear:
 
-```
-[Target Video] ──► [OpenCV Stream] ──► [RAM Frame Buffer]
-                                                │
-                 ┌──────────────────────────────┴──────────────────────────────┐
-                 ▼                                                             ▼
-    [InsightFace SCRFD Detect]                                      [Fast ROI Tracking Cache]
-                 │                                                             │
-                 ▼                                                             │
-    [ArcFace 512D Identity Match]                                              │
-                 │                                                             │
-                 ▼                                                             │
-    [InSwapper 128 Latent Transfer] ◄──────────────────────────────────────────┘
-                 │
-                 ▼
-    [Modular Blending & Restoration]
-                 │
-                 ▼
-    [Piped to FFmpeg stdin (libx264)] ──► [High-Efficiency Output MP4]
+```mermaid
+flowchart TD
+    subgraph Ingestion["Input & In-Memory Stream Ingestion"]
+        TargetVid["Target Video Stream"]:::inputNode
+        CVStream["OpenCV VideoCapture Stream"]:::ramNode
+        RAM["RAM In-Memory Frame Buffer (Zero-Disk Temporary Writes)"]:::ramNode
+    end
+
+    subgraph DetectionTracking["Dual Detection & ROI Tracking Pipeline"]
+        SCRFD["InsightFace SCRFD det_10g (Keyframe Detection)"]:::aiNode
+        ArcFace["ArcFace 512D Embeddings w600k_r50 (Identity Match)"]:::aiNode
+        ROITracker["Fast ROI Tracking Cache (Lightweight Sub-Window Tracking)"]:::trackingNode
+    end
+
+    subgraph NeuralSwap["Latent Transfer & Compositing"]
+        InSwapper["InSwapper 128 Latent Transfer (inswapper_128.onnx)"]:::swapNode
+        Restoration["Face Restoration (GFPGAN / CodeFormer / Classic Guard)"]:::blendNode
+        Blending["Modular Blending Engine (Adaptive / Feathered / Alpha)"]:::blendNode
+    end
+
+    subgraph Encoding["Output Stream Assembly"]
+        Pipe["Piped Directly to Standard Input (Raw BGR Stream)"]:::ramNode
+        FFmpeg["Asynchronous FFmpeg Subprocess (libx264 -crf 18 -pix_fmt yuv420p)"]:::ramNode
+        FinalOut["High-Efficiency MP4 Output (With Muxed Multi-Channel Audio)"]:::outputNode
+    end
+
+    TargetVid --> CVStream
+    CVStream --> RAM
+    RAM -->|"Keyframes (1 in 3 to 5 frames)"| SCRFD
+    RAM -->|"Intermediate Frames"| ROITracker
+    SCRFD --> ArcFace
+    ArcFace --> InSwapper
+    ROITracker --> InSwapper
+    InSwapper --> Restoration
+    Restoration --> Blending
+    Blending --> Pipe
+    Pipe --> FFmpeg
+    FFmpeg --> FinalOut
+
+    classDef inputNode fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+    classDef ramNode fill:#1e293b,stroke:#818cf8,stroke-width:2px,color:#f8fafc;
+    classDef aiNode fill:#2e1065,stroke:#c084fc,stroke-width:2px,color:#f8fafc;
+    classDef trackingNode fill:#451a03,stroke:#fbbf24,stroke-width:2px,color:#f8fafc;
+    classDef swapNode fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#f8fafc;
+    classDef blendNode fill:#431407,stroke:#fb923c,stroke-width:2px,color:#f8fafc;
+    classDef outputNode fill:#14532d,stroke:#4ade80,stroke-width:2px,color:#f8fafc;
 ```
 
 ---
