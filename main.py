@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.analytics.router import router as analytics_router
+from backend.app.confidence.artifact_detector import BoundaryArtifactDetector
 from backend.app.confidence.scorer import PersonaForgeIntegrityScorer
 from backend.app.identity.validator import IdentityValidator
 from backend.app.models.restoration.factory import RestorationFactory
@@ -339,6 +340,9 @@ async def preview_faceswap(
     duration: float = Query(4.0, description="Preview duration in seconds"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
     restoration: str | None = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
+    restoration_weight: float = Query(
+        0.7, ge=0.0, le=1.0, description="Restoration fidelity blending weight w in [0.0, 1.0]"
+    ),
 ):
     _session_dir, img_path, vid_path = _resolve_session(session_id)
     job_id = _new_job(session_id, "preview")
@@ -356,14 +360,16 @@ async def preview_faceswap(
         preview_seconds=duration,
         resize_mode=resize_mode,
         restoration=restoration,
+        restoration_weight=restoration_weight,
     )
     logger.info(
-        "Preview job %s queued for session %s (target=%s, multi=%s, restoration=%s)",
+        "Preview job %s queued for session %s (target=%s, multi=%s, restoration=%s, weight=%.2f)",
         job_id,
         session_id,
         target_face_id or face_index,
         bool(target_mappings),
         restoration,
+        restoration_weight,
     )
     return JSONResponse({"job_id": job_id, "message": "Preview started. Poll /status/{job_id}."})
 
@@ -378,6 +384,9 @@ async def process_faceswap(
     target_mappings: str | None = Query(None, description="JSON mapping target person ID to source image filename"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
     restoration: str | None = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
+    restoration_weight: float = Query(
+        0.7, ge=0.0, le=1.0, description="Restoration fidelity blending weight w in [0.0, 1.0]"
+    ),
 ):
     _session_dir, img_path, vid_path = _resolve_session(session_id)
     job_id = _new_job(session_id, "full")
@@ -395,14 +404,16 @@ async def process_faceswap(
         preview_seconds=None,
         resize_mode=resize_mode,
         restoration=restoration,
+        restoration_weight=restoration_weight,
     )
     logger.info(
-        "Full job %s queued for session %s (target=%s, multi=%s, restoration=%s)",
+        "Full job %s queued for session %s (target=%s, multi=%s, restoration=%s, weight=%.2f)",
         job_id,
         session_id,
         target_face_id or face_index,
         bool(target_mappings),
         restoration,
+        restoration_weight,
     )
     return JSONResponse({"job_id": job_id, "message": "Processing started. Poll /status/{job_id}."})
 
@@ -415,6 +426,9 @@ async def process_multi_faceswap(
     quality: str = Query("balanced", enum=["fast", "balanced", "high"]),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
     restoration: str | None = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
+    restoration_weight: float = Query(
+        0.7, ge=0.0, le=1.0, description="Restoration fidelity blending weight w in [0.0, 1.0]"
+    ),
 ):
     _session_dir, img_path, vid_path = _resolve_session(session_id)
     job_id = _new_job(session_id, "full_multi")
@@ -432,12 +446,14 @@ async def process_multi_faceswap(
         preview_seconds=None,
         resize_mode=resize_mode,
         restoration=restoration,
+        restoration_weight=restoration_weight,
     )
     logger.info(
-        "Multi-target job %s queued for session %s (restoration=%s)",
+        "Multi-target job %s queued for session %s (restoration=%s, weight=%.2f)",
         job_id,
         session_id,
         restoration,
+        restoration_weight,
     )
     return JSONResponse(
         {"job_id": job_id, "message": "Multi-person simultaneous processing started. Poll /status/{job_id}."}
@@ -566,6 +582,37 @@ async def get_integrity_report(job_id: str):
         det_score=0.98,
     )
     return JSONResponse(report.model_dump())
+
+
+@app.post("/confidence/detect-boundary-artifacts", summary="Detect boundary seam gradient jumps and color divergence")
+async def detect_boundary_artifacts_endpoint(
+    image: UploadFile = File(..., description="Image frame to analyze for seam artifacts"),
+    x1: int | None = Query(None, description="Bounding box x1"),
+    y1: int | None = Query(None, description="Bounding box y1"),
+    x2: int | None = Query(None, description="Bounding box x2"),
+    y2: int | None = Query(None, description="Bounding box y2"),
+):
+    _check_ext(image.filename, ALLOWED_IMAGE_EXTS, "image")
+    img_data = await image.read()
+    if not img_data:
+        raise HTTPException(400, "Uploaded image is empty.")
+    np_arr = np.frombuffer(img_data, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(400, "Could not decode image.")
+
+    bbox = [x1, y1, x2, y2] if None not in (x1, y1, x2, y2) else None
+    report = BoundaryArtifactDetector.detect_artifacts(composite_frame=frame, bbox=bbox)
+    return JSONResponse(report.model_dump())
+
+
+@app.get("/confidence/artifact-report/{job_id}", summary="Get boundary artifact report for a job")
+async def get_artifact_report(job_id: str):
+    reports_dir = OUTPUTS_DIR / "reports"
+    art_path = reports_dir / f"boundary_artifact_report_{job_id}.json"
+    if art_path.exists():
+        return FileResponse(str(art_path), media_type="application/json", filename=art_path.name)
+    raise HTTPException(404, f"Artifact report for job '{job_id}' not found.")
 
 
 @app.post("/quality/assess", summary="Assess face image quality")
@@ -750,6 +797,7 @@ async def _run_pipeline(
     preview_seconds: float | None = None,
     resize_mode: str = "maintain",
     restoration: str | None = "none",
+    restoration_weight: float = 0.7,
 ):
     """
     Unified preview + full processing pipeline.
@@ -928,6 +976,15 @@ async def _run_pipeline(
                     except Exception as exc:
                         logger.warning("[%s] Could not load target embedding: %s", job_id[:8], exc)
 
+            # Initialize restoration adapter if requested
+            restorer = None
+            if restoration and restoration.lower() != "none":
+                try:
+                    restorer, _ = RestorationFactory.create_restorer(name=restoration, fallback_to_classic=True)
+                    logger.info("[%s] Active restorer: %s (w=%.2f)", job_id[:8], restoration, restoration_weight)
+                except Exception as r_err:
+                    logger.warning("[%s] Restorer initialization error: %s", job_id[:8], r_err)
+
             swapped, _ = await loop.run_in_executor(
                 None,
                 partial(
@@ -946,6 +1003,8 @@ async def _run_pipeline(
                     bitrate=bitrate,
                     target_embedding=target_embedding,
                     target_mapping=target_mapping,
+                    restorer=restorer,
+                    restoration_weight=restoration_weight,
                 ),
             )
 
@@ -972,12 +1031,28 @@ async def _run_pipeline(
 
             id_rep = identity_validator.generate_identity_report()
             calc_sim = id_rep.average_similarity if id_rep.total_frames_analyzed > 0 else sim_score
+
+            # Run Boundary Artifact Risk Detection on rendered output frame
+            artifact_rep = None
+            try:
+                cap_out = cv2.VideoCapture(out_path)
+                if cap_out.isOpened():
+                    ret_out, frame_out = cap_out.read()
+                    if ret_out and frame_out is not None:
+                        artifact_rep = BoundaryArtifactDetector.detect_artifacts(composite_frame=frame_out)
+                        art_path = reports_dir / f"boundary_artifact_report_{job_id}.json"
+                        art_path.write_text(json.dumps(artifact_rep.model_dump(), indent=2), encoding="utf-8")
+                    cap_out.release()
+            except Exception as a_exc:
+                logger.debug("[%s] Boundary artifact evaluation notice: %s", job_id[:8], a_exc)
+
+            b_ratio = artifact_rep.seam_gradient_score if artifact_rep else 1.15
             integrity_report = PersonaForgeIntegrityScorer.evaluate(
                 job_id=job_id,
                 cosine_similarity=calc_sim,
                 laplacian_variance=180.0,
                 jitter_iod=0.025,
-                boundary_ratio=1.15,
+                boundary_ratio=b_ratio,
                 det_score=0.98,
             )
             integ_path = reports_dir / f"integrity_report_{job_id}.json"

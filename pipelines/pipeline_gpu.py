@@ -33,6 +33,8 @@ def process_video_gpu(
     bitrate: str | None = None,
     target_embedding: np.ndarray | None = None,
     target_mapping: list[tuple[np.ndarray, Any]] | None = None,
+    restorer: Any | None = None,
+    restoration_weight: float = 0.7,
 ) -> tuple[int, int]:
     """
     Delegate to the original GPU processing loop unchanged.
@@ -53,4 +55,6 @@ def process_video_gpu(
         bitrate=bitrate,
         target_embedding=target_embedding,
         target_mapping=target_mapping,
+        restorer=restorer,
+        restoration_weight=restoration_weight,
     )

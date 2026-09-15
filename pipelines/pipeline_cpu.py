@@ -84,6 +84,8 @@ def process_video_cpu(
     bitrate: str | None = None,
     target_embedding: np.ndarray | None = None,
     target_mapping: list[tuple[np.ndarray, Any]] | None = None,
+    restorer: Any | None = None,
+    restoration_weight: float = 0.7,
 ) -> tuple[int, int]:
     """
     CPU face-swap processing pipeline.
@@ -309,6 +311,12 @@ def process_video_cpu(
                             logger.debug("[CPU] Swap on crop failed: %s", e)
 
                     if did_swap:
+                        if restorer is not None and getattr(restorer, "is_available", lambda: False)():
+                            try:
+                                result_crop = restorer.restore_crop(result_crop, blend_weight=restoration_weight)
+                            except Exception as e:
+                                logger.debug("[CPU] Restoration failed: %s", e)
+
                         # Direct paste — no seamlessClone in CPU mode
                         result_small = _direct_paste(small, result_crop, x1c, y1c, x2c, y2c)
                         last_centre = _centre(tracked_bbox)

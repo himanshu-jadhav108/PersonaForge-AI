@@ -209,6 +209,8 @@ class FaceSwapper:
         bitrate: str | None = None,
         target_embedding: np.ndarray | None = None,
         target_mapping: list[tuple[np.ndarray, Any]] | None = None,
+        restorer: Any | None = None,
+        restoration_weight: float = 0.7,
     ) -> tuple[int, int]:
         """
         Route to GPU or CPU pipeline based on detected hardware.
@@ -235,6 +237,8 @@ class FaceSwapper:
                 bitrate=bitrate,
                 target_embedding=target_embedding,
                 target_mapping=target_mapping,
+                restorer=restorer,
+                restoration_weight=restoration_weight,
             )
         else:
             from pipelines.pipeline_cpu import process_video_cpu
@@ -256,6 +260,8 @@ class FaceSwapper:
                 quality=quality,
                 target_embedding=target_embedding,
                 target_mapping=target_mapping,
+                restorer=restorer,
+                restoration_weight=restoration_weight,
             )
 
     # ── Source Face ────────────────────────────────────────────────────────────
@@ -335,6 +341,8 @@ class FaceSwapper:
         bitrate: str | None = None,
         target_embedding: np.ndarray | None = None,
         target_mapping: list[tuple[np.ndarray, Any]] | None = None,
+        restorer: Any | None = None,
+        restoration_weight: float = 0.7,
     ) -> tuple[int, int]:
         """
         Core processing loop.
@@ -485,7 +493,12 @@ class FaceSwapper:
                                     if fcrop_faces:
                                         fcrop_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
                                         swapped_crop = self._swap_adapter.swap_face(fcrop, fcrop_faces[0], matched_src)
-                                        swapped_crop = _enhance_crop(swapped_crop, quality)
+                                        swapped_crop = _enhance_crop(
+                                            swapped_crop,
+                                            quality,
+                                            restorer=restorer,
+                                            restoration_weight=restoration_weight,
+                                        )
                                         result = _blend_crop(
                                             result, swapped_crop, cx1, cy1, cx2, cy2, quality=quality, blender=blender
                                         )
@@ -546,7 +559,12 @@ class FaceSwapper:
                                 logger.debug("Swap on crop failed: %s", e)
 
                         if did_swap:
-                            result_crop = _enhance_crop(result_crop, quality)
+                            result_crop = _enhance_crop(
+                                result_crop,
+                                quality,
+                                restorer=restorer,
+                                restoration_weight=restoration_weight,
+                            )
                             result = _blend_crop(
                                 frame, result_crop, x1c, y1c, x2c, y2c, quality=quality, blender=blender
                             )
@@ -624,8 +642,19 @@ def _bbox_area(bbox) -> float:
     return max(0.0, float((x2 - x1) * (y2 - y1)))
 
 
-def _enhance_crop(img: np.ndarray, quality: QualityMode) -> np.ndarray:
-    """Apply quality-appropriate enhancement on the face crop."""
+def _enhance_crop(
+    img: np.ndarray,
+    quality: QualityMode,
+    restorer: Any | None = None,
+    restoration_weight: float = 0.7,
+) -> np.ndarray:
+    """Apply face restoration or quality-appropriate enhancement on the face crop."""
+    if restorer is not None and getattr(restorer, "is_available", lambda: False)():
+        try:
+            return restorer.restore_crop(img, blend_weight=restoration_weight)
+        except Exception as exc:
+            logger.warning("Face restoration failed, falling back to quality enhancement: %s", exc)
+
     if quality == QualityMode.FAST:
         return img  # No enhancement
     elif quality == QualityMode.BALANCED:

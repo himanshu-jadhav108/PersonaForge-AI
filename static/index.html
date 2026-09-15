@@ -1094,6 +1094,26 @@
           <span id="safeguardIcon">ℹ️</span>
           <span id="safeguardText">Querying restoration adapter status…</span>
         </div>
+
+        <!-- Restoration Fidelity Weight Slider -->
+        <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(168, 85, 247, 0.2);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-family:var(--mono); font-size:11px; color:var(--text); font-weight:600;">
+              Fidelity Weight (<span style="color:var(--accent);">w</span>):
+            </span>
+            <span id="restorationWeightLabel" style="font-family:var(--mono); font-size:12px; color:var(--accent); font-weight:700;">
+              0.70
+            </span>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span style="font-family:var(--mono); font-size:10px; color:var(--muted);">0.0 (Original)</span>
+            <input type="range" id="restorationWeightSlider" min="0.0" max="1.0" step="0.05" value="0.70" oninput="updateRestorationWeight(this.value)" style="flex:1; accent-color:var(--accent); cursor:pointer;" />
+            <span style="font-family:var(--mono); font-size:10px; color:var(--muted);">1.0 (Full AI)</span>
+          </div>
+          <div style="font-size:10.5px; color:var(--muted); margin-top:4px;">
+            Balances generative enhancement detail with original face consistency (Safeguard 2).
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1423,9 +1443,16 @@ let targetMode          = 'single'; // 'single' | 'multi'
 let currentIdentities   = [];
 let multiTargetMappings = {}; // { [face_id]: { enabled: bool, source_name: str, thumb_url: str } }
 let restorationMode     = 'none';
+let restorationWeight   = 0.70;
 let currentAdapter      = 'gfpgan';
 let logLines            = [];
 const MAX_LOG           = 40;
+
+function updateRestorationWeight(val) {
+  restorationWeight = parseFloat(val);
+  const lbl = document.getElementById('restorationWeightLabel');
+  if (lbl) lbl.textContent = restorationWeight.toFixed(2);
+}
 
 // DOM Elements
 const imgInput       = document.getElementById('imgInput');
@@ -1806,6 +1833,7 @@ async function doPreview() {
     duration: 4.0,
     resize_mode: resizeMode,
     restoration: restorationMode,
+    restoration_weight: restorationWeight,
   });
 
   if (targetMode === 'multi') {
@@ -1857,6 +1885,7 @@ async function doProcess() {
     face_index: fi,
     resize_mode: resizeMode,
     restoration: restorationMode,
+    restoration_weight: restorationWeight,
   });
 
   if (targetMode === 'multi') {

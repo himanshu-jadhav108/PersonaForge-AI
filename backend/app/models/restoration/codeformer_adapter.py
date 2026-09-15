@@ -75,7 +75,7 @@ class CodeFormerRestorer(BaseFaceRestorer):
             inputs = {self.session.get_inputs()[0].name: blob}
             if len(self.session.get_inputs()) > 1:
                 # Provide fidelity weight scalar tensor if input exists
-                w_tensor = np.array([self.fidelity_weight], dtype=np.float32)
+                w_tensor = np.array([weight], dtype=np.float32)
                 inputs[self.session.get_inputs()[1].name] = w_tensor
 
             outputs = self.session.run(None, inputs)
