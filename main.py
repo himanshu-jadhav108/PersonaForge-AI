@@ -291,6 +291,43 @@ async def upload_files(
     )
 
 
+@app.post("/upload/source", summary="Upload an auxiliary source face image for a specific target person")
+async def upload_auxiliary_source(
+    image: UploadFile = File(..., description="Auxiliary source face image"),
+    session_id: str = Query(..., description="Session ID from initial upload"),
+    target_face_id: str = Query(..., description="Target person ID (e.g. 'person_1')"),
+):
+    if not validate_session_id(session_id):
+        raise HTTPException(400, "Invalid session ID format.")
+    session_dir = UPLOADS_DIR / session_id
+    if not session_dir.exists():
+        raise HTTPException(404, "Session not found.")
+
+    _check_ext(image.filename, ALLOWED_IMAGE_EXTS, "image")
+    safe_name = sanitize_filename(image.filename, f"source_{target_face_id}.jpg")
+    ext = Path(safe_name).suffix.lower() or ".jpg"
+    safe_target = sanitize_filename(target_face_id, "person")
+    dest_name = f"source_{safe_target}{ext}"
+    dest_path = session_dir / dest_name
+
+    MAX_IMG_SIZE = 50 * 1024 * 1024
+    await _stream_upload_to_disk(image, dest_path, MAX_IMG_SIZE)
+    valid, err = validate_file_security(dest_path, "image", MAX_IMG_SIZE)
+    if not valid:
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(400, f"Invalid source image: {err}")
+
+    return JSONResponse(
+        {
+            "status": "success",
+            "session_id": session_id,
+            "target_face_id": target_face_id,
+            "source_filename": dest_name,
+            "message": f"Source face uploaded for {target_face_id}.",
+        }
+    )
+
+
 @app.post("/preview", summary="Generate a short preview clip (first 3-5 s)")
 async def preview_faceswap(
     background_tasks: BackgroundTasks,
@@ -298,6 +335,7 @@ async def preview_faceswap(
     quality: str = Query("balanced", enum=["fast", "balanced", "high"]),
     face_index: int = Query(-1, description="-1=all faces, 0..n=specific face"),
     target_face_id: str | None = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
+    target_mappings: str | None = Query(None, description="JSON mapping target person ID to source image filename"),
     duration: float = Query(4.0, description="Preview duration in seconds"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
     restoration: str | None = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
@@ -306,7 +344,7 @@ async def preview_faceswap(
     job_id = _new_job(session_id, "preview")
     background_tasks.add_task(
         _run_pipeline,
-        swapper=app.state.swapper,
+        swapper=getattr(app.state, "swapper", None),
         job_id=job_id,
         session_id=session_id,
         img_path=img_path,
@@ -314,15 +352,17 @@ async def preview_faceswap(
         quality=quality,
         face_index=face_index,
         target_face_id=target_face_id,
+        target_mappings=target_mappings,
         preview_seconds=duration,
         resize_mode=resize_mode,
         restoration=restoration,
     )
     logger.info(
-        "Preview job %s queued for session %s (target=%s, restoration=%s)",
+        "Preview job %s queued for session %s (target=%s, multi=%s, restoration=%s)",
         job_id,
         session_id,
         target_face_id or face_index,
+        bool(target_mappings),
         restoration,
     )
     return JSONResponse({"job_id": job_id, "message": "Preview started. Poll /status/{job_id}."})
@@ -335,6 +375,7 @@ async def process_faceswap(
     quality: str = Query("balanced", enum=["fast", "balanced", "high"]),
     face_index: int = Query(-1),
     target_face_id: str | None = Query(None, description="Specific target identity ID (e.g. 'person_1')"),
+    target_mappings: str | None = Query(None, description="JSON mapping target person ID to source image filename"),
     resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
     restoration: str | None = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
 ):
@@ -342,7 +383,7 @@ async def process_faceswap(
     job_id = _new_job(session_id, "full")
     background_tasks.add_task(
         _run_pipeline,
-        swapper=app.state.swapper,
+        swapper=getattr(app.state, "swapper", None),
         job_id=job_id,
         session_id=session_id,
         img_path=img_path,
@@ -350,18 +391,57 @@ async def process_faceswap(
         quality=quality,
         face_index=face_index,
         target_face_id=target_face_id,
+        target_mappings=target_mappings,
         preview_seconds=None,
         resize_mode=resize_mode,
         restoration=restoration,
     )
     logger.info(
-        "Full job %s queued for session %s (target=%s, restoration=%s)",
+        "Full job %s queued for session %s (target=%s, multi=%s, restoration=%s)",
         job_id,
         session_id,
         target_face_id or face_index,
+        bool(target_mappings),
         restoration,
     )
     return JSONResponse({"job_id": job_id, "message": "Processing started. Poll /status/{job_id}."})
+
+
+@app.post("/process/multi", summary="Execute multi-person simultaneous face-swap pipeline")
+async def process_multi_faceswap(
+    background_tasks: BackgroundTasks,
+    session_id: str = Query(...),
+    target_mappings: str = Query(..., description="JSON mapping target person IDs to source filenames"),
+    quality: str = Query("balanced", enum=["fast", "balanced", "high"]),
+    resize_mode: str = Query("maintain", enum=["maintain", "crop_portrait"]),
+    restoration: str | None = Query("none", description="Restoration adapter: gfpgan, codeformer, classic, none"),
+):
+    _session_dir, img_path, vid_path = _resolve_session(session_id)
+    job_id = _new_job(session_id, "full_multi")
+    background_tasks.add_task(
+        _run_pipeline,
+        swapper=getattr(app.state, "swapper", None),
+        job_id=job_id,
+        session_id=session_id,
+        img_path=img_path,
+        vid_path=vid_path,
+        quality=quality,
+        face_index=-1,
+        target_face_id=None,
+        target_mappings=target_mappings,
+        preview_seconds=None,
+        resize_mode=resize_mode,
+        restoration=restoration,
+    )
+    logger.info(
+        "Multi-target job %s queued for session %s (restoration=%s)",
+        job_id,
+        session_id,
+        restoration,
+    )
+    return JSONResponse(
+        {"job_id": job_id, "message": "Multi-person simultaneous processing started. Poll /status/{job_id}."}
+    )
 
 
 @app.post("/cancel/{job_id}", summary="Cancel an in-progress or queued job")
@@ -666,6 +746,7 @@ async def _run_pipeline(
     quality: str = "balanced",
     face_index: int = -1,
     target_face_id: str | None = None,
+    target_mappings: str | None = None,
     preview_seconds: float | None = None,
     resize_mode: str = "maintain",
     restoration: str | None = "none",
@@ -806,9 +887,35 @@ async def _run_pipeline(
 
             identity_validator = IdentityValidator(job_id=job_id)
 
-            # Resolve target identity embedding if targeted
+            # Resolve target identity embeddings for multi-person swap or single targeted swap
             target_embedding = None
-            if target_face_id:
+            target_mapping = None
+            if target_mappings:
+                try:
+                    t_map_dict = json.loads(target_mappings) if isinstance(target_mappings, str) else target_mappings
+                    s_dir = UPLOADS_DIR / session_id
+                    ident_file = s_dir / "identities.json"
+                    if ident_file.exists() and isinstance(t_map_dict, dict):
+                        idents = json.loads(ident_file.read_text(encoding="utf-8"))
+                        resolved_pairs = []
+                        for tf_id, src_val in t_map_dict.items():
+                            if tf_id in idents and idents[tf_id].get("embedding"):
+                                t_emb = np.array(idents[tf_id]["embedding"], dtype=np.float32)
+                                specific_src_path = str(s_dir / src_val) if (s_dir / src_val).exists() else img_path
+                                t_src_face = swapper.get_source_face(specific_src_path)
+                                if t_src_face is not None:
+                                    resolved_pairs.append((t_emb, t_src_face))
+                        if resolved_pairs:
+                            target_mapping = resolved_pairs
+                            upd(
+                                "processing",
+                                35,
+                                f"Multi-target swap active for {len(target_mapping)} people…",
+                                status="processing",
+                            )
+                except Exception as exc:
+                    logger.warning("[%s] Failed to parse target_mappings: %s", job_id[:8], exc)
+            elif target_face_id:
                 s_dir = UPLOADS_DIR / session_id
                 ident_file = s_dir / "identities.json"
                 if ident_file.exists():
@@ -838,6 +945,7 @@ async def _run_pipeline(
                     identity_validator=identity_validator,
                     bitrate=bitrate,
                     target_embedding=target_embedding,
+                    target_mapping=target_mapping,
                 ),
             )
 

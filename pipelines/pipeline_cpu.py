@@ -18,6 +18,7 @@ CPU optimisations applied here:
 import logging
 import subprocess
 import time
+from typing import Any
 
 import cv2
 import numpy as np
@@ -82,6 +83,7 @@ def process_video_cpu(
     identity_validator=None,
     bitrate: str | None = None,
     target_embedding: np.ndarray | None = None,
+    target_mapping: list[tuple[np.ndarray, Any]] | None = None,
 ) -> tuple[int, int]:
     """
     CPU face-swap processing pipeline.
@@ -221,7 +223,48 @@ def process_video_cpu(
             # ── Crop-based Swap (on downscaled frame) ─────────────────────────
             result_small = small.copy()
 
-            if face_found and tracked_bbox and source_face is not None:
+            if target_mapping:
+                all_faces = swapper_app.get(small)
+                if all_faces:
+                    did_swap_any = False
+                    matched_targets = set()
+                    for df in all_faces:
+                        df_emb = getattr(df, "embedding", None)
+                        if df_emb is None:
+                            continue
+                        df_emb_arr = np.array(df_emb, dtype=np.float32).flatten()
+                        df_norm = float(np.linalg.norm(df_emb_arr))
+                        if df_norm == 0:
+                            continue
+
+                        best_idx = None
+                        best_sim = -1.0
+                        for idx, (t_emb, _t_src) in enumerate(target_mapping):
+                            if idx in matched_targets:
+                                continue
+                            t_norm = float(np.linalg.norm(t_emb))
+                            if t_norm > 0:
+                                sim = float(np.dot(df_emb_arr, t_emb) / (df_norm * t_norm))
+                                if sim > best_sim:
+                                    best_sim = sim
+                                    best_idx = idx
+
+                        if best_idx is not None and best_sim >= 0.40:
+                            matched_targets.add(best_idx)
+                            matched_src = target_mapping[best_idx][1]
+                            try:
+                                result_small = swap_adapter.swap_face(result_small, df, matched_src)
+                                did_swap_any = True
+                            except Exception as e:
+                                logger.debug("[CPU] Multi-target swap failed: %s", e)
+
+                    if did_swap_any:
+                        swapped += 1
+                    else:
+                        skipped += 1
+                else:
+                    skipped += 1
+            elif face_found and tracked_bbox and source_face is not None:
                 x, y, bw, bh = tracked_bbox
                 pad_x = int(bw * FACE_CROP_PADDING)
                 pad_y = int(bh * FACE_CROP_PADDING)

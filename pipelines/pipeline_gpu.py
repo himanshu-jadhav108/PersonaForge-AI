@@ -9,7 +9,7 @@ Nothing in this file alters GPU behaviour.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -32,6 +32,7 @@ def process_video_gpu(
     identity_validator=None,
     bitrate: str | None = None,
     target_embedding: np.ndarray | None = None,
+    target_mapping: list[tuple[np.ndarray, Any]] | None = None,
 ) -> tuple[int, int]:
     """
     Delegate to the original GPU processing loop unchanged.
@@ -51,4 +52,5 @@ def process_video_gpu(
         identity_validator=identity_validator,
         bitrate=bitrate,
         target_embedding=target_embedding,
+        target_mapping=target_mapping,
     )

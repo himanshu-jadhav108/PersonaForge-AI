@@ -4,6 +4,7 @@ tests/test_system_security.py — Unit and integration tests for Phase 9 (Securi
 
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -160,7 +161,7 @@ def test_retention_manager_cleanup(tmp_path: Path):
             "input_width": 1280,
             "input_height": 720,
             "resize_mode": "maintain",
-            "created_at": "2026-09-06T12:00:00Z",
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
     )
 

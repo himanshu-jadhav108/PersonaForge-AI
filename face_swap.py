@@ -15,6 +15,7 @@ Features:
 import logging
 import time
 from enum import Enum
+from typing import Any
 
 import cv2
 import numpy as np
@@ -207,6 +208,7 @@ class FaceSwapper:
         identity_validator=None,
         bitrate: str | None = None,
         target_embedding: np.ndarray | None = None,
+        target_mapping: list[tuple[np.ndarray, Any]] | None = None,
     ) -> tuple[int, int]:
         """
         Route to GPU or CPU pipeline based on detected hardware.
@@ -232,6 +234,7 @@ class FaceSwapper:
                 identity_validator=identity_validator,
                 bitrate=bitrate,
                 target_embedding=target_embedding,
+                target_mapping=target_mapping,
             )
         else:
             from pipelines.pipeline_cpu import process_video_cpu
@@ -252,6 +255,7 @@ class FaceSwapper:
                 bitrate=bitrate,
                 quality=quality,
                 target_embedding=target_embedding,
+                target_mapping=target_mapping,
             )
 
     # ── Source Face ────────────────────────────────────────────────────────────
@@ -330,6 +334,7 @@ class FaceSwapper:
         identity_validator=None,
         bitrate: str | None = None,
         target_embedding: np.ndarray | None = None,
+        target_mapping: list[tuple[np.ndarray, Any]] | None = None,
     ) -> tuple[int, int]:
         """
         Core processing loop.
@@ -434,8 +439,70 @@ class FaceSwapper:
                         tracker = None
                         tracked_bbox = None
 
-                # ── Crop-based Swap ────────────────────────────────────────────
-                if face_found and tracked_bbox and source_face is not None:
+                # ── Multi-Target Swap or Single-Crop Swap ──────────────────────
+                if target_mapping:
+                    all_faces = self._app.get(frame)
+                    if all_faces:
+                        did_swap_any = False
+                        matched_targets = set()
+                        result = frame.copy()
+                        for df in all_faces:
+                            df_emb = getattr(df, "embedding", None)
+                            if df_emb is None:
+                                continue
+                            df_emb_arr = np.array(df_emb, dtype=np.float32).flatten()
+                            df_norm = float(np.linalg.norm(df_emb_arr))
+                            if df_norm == 0:
+                                continue
+
+                            best_idx = None
+                            best_sim = -1.0
+                            for idx, (t_emb, _t_src) in enumerate(target_mapping):
+                                if idx in matched_targets:
+                                    continue
+                                t_norm = float(np.linalg.norm(t_emb))
+                                if t_norm > 0:
+                                    sim = float(np.dot(df_emb_arr, t_emb) / (df_norm * t_norm))
+                                    if sim > best_sim:
+                                        best_sim = sim
+                                        best_idx = idx
+
+                            if best_idx is not None and best_sim >= 0.40:
+                                matched_targets.add(best_idx)
+                                matched_src = target_mapping[best_idx][1]
+                                try:
+                                    bx1, by1, bx2, by2 = [int(v) for v in df.bbox[:4]]
+                                    bw, bh = bx2 - bx1, by2 - by1
+                                    pad_x = int(bw * FACE_CROP_PADDING)
+                                    pad_y = int(bh * FACE_CROP_PADDING)
+                                    cx1 = max(0, bx1 - pad_x)
+                                    cy1 = max(0, by1 - pad_y)
+                                    cx2 = min(w, bx2 + pad_x)
+                                    cy2 = min(h, by2 + pad_y)
+
+                                    fcrop = result[cy1:cy2, cx1:cx2]
+                                    fcrop_faces = self._app.get(fcrop)
+                                    if fcrop_faces:
+                                        fcrop_faces.sort(key=lambda f: _bbox_area(f.bbox), reverse=True)
+                                        swapped_crop = self._swap_adapter.swap_face(fcrop, fcrop_faces[0], matched_src)
+                                        swapped_crop = _enhance_crop(swapped_crop, quality)
+                                        result = _blend_crop(
+                                            result, swapped_crop, cx1, cy1, cx2, cy2, quality=quality, blender=blender
+                                        )
+                                    else:
+                                        result = self._swap_adapter.swap_face(result, df, matched_src)
+                                    did_swap_any = True
+                                except Exception as e:
+                                    logger.debug("Multi-target swap failed: %s", e)
+
+                        if did_swap_any:
+                            swapped += 1
+                        else:
+                            skipped += 1
+                    else:
+                        result = frame
+                        skipped += 1
+                elif face_found and tracked_bbox and source_face is not None:
                     x, y, bw, bh = tracked_bbox
                     pad_x = int(bw * FACE_CROP_PADDING)
                     pad_y = int(bh * FACE_CROP_PADDING)

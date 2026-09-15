@@ -270,6 +270,43 @@
     }
 
     .btn-sm { padding: 6px 12px; font-size: 11px; }
+    .btn-xs { padding: 4px 9px; font-size: 10px; border-radius: 4px; }
+
+    .mode-tab-group {
+      display: inline-flex; gap: 6px; background: rgba(0, 0, 0, 0.3); padding: 3px; border-radius: 8px; border: 1px solid var(--border);
+    }
+    .mode-tab-btn {
+      padding: 5px 12px; border-radius: 6px;
+      font-family: var(--mono); font-size: 10.5px; font-weight: 500;
+      background: transparent; border: 1px solid transparent;
+      color: var(--subtext); cursor: pointer; transition: all .2s ease;
+    }
+    .mode-tab-btn.active {
+      background: rgba(0, 242, 254, 0.12);
+      border-color: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(0, 242, 254, 0.2);
+    }
+
+    .identity-card.multi-mode {
+      text-align: left; align-items: stretch; padding: 12px 14px;
+    }
+    .identity-card-top {
+      display: flex; align-items: center; gap: 12px; width: 100%;
+    }
+    .identity-source-box {
+      margin-top: 10px; padding: 8px 10px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 6px; border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .identity-source-preview {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .identity-source-thumb {
+      width: 28px; height: 28px; border-radius: 5px; object-fit: cover;
+      border: 1px solid var(--border-hi);
+    }
 
     /* ── Upload Area ─────────────────────────────────────────────────── */
     .upload-grid {
@@ -929,27 +966,44 @@
   <div id="faceSelectionSection" style="display:none;">
     <div class="step-label">03 — Target Face Identity Selection</div>
     <div class="card">
-      <div class="card-title">Detected Person Clusters</div>
-      <div class="card-sub">InsightFace ArcFace 512D embeddings clustered across sampled keyframes. Select a person to replace, or choose to swap all detected faces.</div>
+      <div class="card-title">
+        <span>Detected Person Clusters</span>
+        <div class="mode-tab-group">
+          <button type="button" class="mode-tab-btn active" id="tabSingleTarget" onclick="setTargetMode('single')">Single Person / All</button>
+          <button type="button" class="mode-tab-btn" id="tabMultiTarget" onclick="setTargetMode('multi')">Multi-Person Simultaneous Swap</button>
+        </div>
+      </div>
+      <div class="card-sub" id="targetModeSub">InsightFace ArcFace 512D embeddings clustered across sampled keyframes. Select a person to replace, or choose to swap all detected faces.</div>
 
       <!-- Clustered Identity Cards -->
       <div class="identity-grid" id="identityGrid">
         <!-- Rendered dynamically -->
       </div>
 
-      <!-- Multi-Face Toggle & Fallback Face Index -->
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:18px; padding-top:14px; border-top:1px solid var(--border); flex-wrap:wrap; gap:12px;">
+      <!-- Single-Mode Controls -->
+      <div id="singleModeControls" style="display:flex; align-items:center; justify-content:space-between; margin-top:18px; padding-top:14px; border-top:1px solid var(--border); flex-wrap:wrap; gap:12px;">
         <label class="toggle-row">
           <span class="switch">
             <input type="checkbox" id="allFacesToggle" checked />
             <span class="slider"></span>
           </span>
-          <span style="font-size:13px; font-weight:500;">Swap all detected faces simultaneously</span>
+          <span style="font-size:13px; font-weight:500;">Swap all detected faces simultaneously (Single Source)</span>
         </label>
 
         <div id="faceIdxWrap" style="display:none; align-items:center; gap:8px; font-family:var(--mono); font-size:11px; color:var(--muted);">
           Target Face Index:
           <input type="number" id="faceIdxInput" value="0" min="0" max="9" style="width:48px; background:var(--glass); border:1px solid var(--border); border-radius:4px; color:#fff; font-family:var(--mono); font-size:12px; padding:3px 6px;" />
+        </div>
+      </div>
+
+      <!-- Multi-Mode Batch Controls -->
+      <div id="multiModeControls" style="display:none; margin-top:18px; padding-top:14px; border-top:1px solid var(--border); align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div style="font-size:12px; color:var(--accent);">
+          ⚡ <b>Multi-Person Engine:</b> Swaps each selected target simultaneously in memory with zero intermediate disk writes.
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-ghost btn-xs" onclick="selectAllMulti(true)">Select All</button>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="selectAllMulti(false)">Deselect All</button>
         </div>
       </div>
     </div>
@@ -1359,16 +1413,19 @@
      PersonaForge AI — Flagship Client Controller
 ════════════════════════════════════════════════════════════════════ -->
 <script>
-let sessionId        = null;
-let currentJobId     = null;
-let pollTimer        = null;
-let qualityMode      = 'balanced';
-let resizeMode       = 'maintain';
-let selectedTargetId = null;
-let restorationMode  = 'none';
-let currentAdapter   = 'gfpgan';
-let logLines         = [];
-const MAX_LOG        = 40;
+let sessionId           = null;
+let currentJobId        = null;
+let pollTimer           = null;
+let qualityMode         = 'balanced';
+let resizeMode          = 'maintain';
+let selectedTargetId    = null;
+let targetMode          = 'single'; // 'single' | 'multi'
+let currentIdentities   = [];
+let multiTargetMappings = {}; // { [face_id]: { enabled: bool, source_name: str, thumb_url: str } }
+let restorationMode     = 'none';
+let currentAdapter      = 'gfpgan';
+let logLines            = [];
+const MAX_LOG           = 40;
 
 // DOM Elements
 const imgInput       = document.getElementById('imgInput');
@@ -1575,7 +1632,74 @@ async function runMediaAnalysis(sessId) {
   }
 }
 
+function setTargetMode(mode) {
+  targetMode = mode;
+  const tabSingle = document.getElementById('tabSingleTarget');
+  const tabMulti = document.getElementById('tabMultiTarget');
+  if (tabSingle) tabSingle.classList.toggle('active', mode === 'single');
+  if (tabMulti) tabMulti.classList.toggle('active', mode === 'multi');
+
+  const sc = document.getElementById('singleModeControls');
+  const mc = document.getElementById('multiModeControls');
+  if (sc) sc.style.display = mode === 'single' ? 'flex' : 'none';
+  if (mc) mc.style.display = mode === 'multi' ? 'flex' : 'none';
+
+  const sub = document.getElementById('targetModeSub');
+  if (sub) {
+    if (mode === 'multi') {
+      sub.textContent = 'Simultaneous Multi-Person Engine: Select multiple target persons to swap in parallel. Each target can use the primary source face or a dedicated auxiliary face.';
+    } else {
+      sub.textContent = 'InsightFace ArcFace 512D embeddings clustered across sampled keyframes. Select a person to replace, or choose to swap all detected faces.';
+    }
+  }
+  renderIdentities(currentIdentities);
+}
+
+function selectAllMulti(select) {
+  currentIdentities.forEach(p => {
+    if (multiTargetMappings[p.face_id]) {
+      multiTargetMappings[p.face_id].enabled = select;
+    }
+  });
+  renderIdentities(currentIdentities);
+}
+
+function toggleMultiTarget(faceId) {
+  if (!multiTargetMappings[faceId]) {
+    multiTargetMappings[faceId] = { enabled: true, source_name: 'source_face.jpg', thumb_url: '' };
+  }
+  multiTargetMappings[faceId].enabled = !multiTargetMappings[faceId].enabled;
+  renderIdentities(currentIdentities);
+}
+
+async function uploadAuxSource(faceId, inputEl) {
+  const file = inputEl.files[0];
+  if (!file || !sessionId) return;
+  addLog(`Uploading custom source face for ${faceId}…`, 'info');
+  const fd = new FormData();
+  fd.append('session_id', sessionId);
+  fd.append('target_person_id', faceId);
+  fd.append('image', file);
+
+  try {
+    const res = await fetch('/upload/source', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Auxiliary source upload failed');
+
+    if (!multiTargetMappings[faceId]) {
+      multiTargetMappings[faceId] = { enabled: true, source_name: 'source_face.jpg', thumb_url: '' };
+    }
+    multiTargetMappings[faceId].source_name = data.source_filename;
+    multiTargetMappings[faceId].thumb_url = URL.createObjectURL(file);
+    addLog(`✓ Assigned custom source face to ${faceId} (${data.source_filename}).`, 'ok');
+    renderIdentities(currentIdentities);
+  } catch (err) {
+    addLog(`Upload error for ${faceId}: ${err.message}`, 'err');
+  }
+}
+
 function renderIdentities(identities) {
+  currentIdentities = identities || [];
   const section = document.getElementById('faceSelectionSection');
   const grid    = document.getElementById('identityGrid');
   if (!identities || identities.length === 0) {
@@ -1584,22 +1708,72 @@ function renderIdentities(identities) {
   }
   section.style.display = 'block';
 
-  grid.innerHTML = identities.map((p, idx) => {
-    const thumbUrl = p.thumbnail_url || `static/assets/logo.jpeg`;
-    const label    = p.person_label || `Detected Person ${idx + 1}`;
-    const confPct  = p.frontal_confidence ? `${(p.frontal_confidence * 100).toFixed(0)}% Conf` : 'High Conf';
-    const framesTxt= p.frame_appearance_count ? `In ${p.frame_appearance_count} frames` : 'Primary identity';
+  // Ensure every cluster has a default mapping
+  identities.forEach(p => {
+    if (!multiTargetMappings[p.face_id]) {
+      multiTargetMappings[p.face_id] = { enabled: true, source_name: 'source_face.jpg', thumb_url: '' };
+    }
+  });
 
-    return `
-      <div class="identity-card" id="card_${p.face_id}" onclick="selectIdentity('${p.face_id}')">
-        <input type="radio" name="identityChoice" class="identity-radio" id="rad_${p.face_id}" />
-        <img src="${thumbUrl}" class="identity-thumb" alt="${label}" onerror="this.src='static/assets/logo.jpeg'" />
-        <div class="identity-name">${label}</div>
-        <div class="identity-meta">${confPct} · ${framesTxt}</div>
-        <span class="tag-badge ${idx === 0 ? 'cyan' : ''}" style="font-size:9px;">${idx === 0 ? 'Primary Subject' : 'Secondary'}</span>
-      </div>
-    `;
-  }).join('');
+  if (targetMode === 'single') {
+    grid.innerHTML = identities.map((p, idx) => {
+      const thumbUrl = p.thumbnail_url || `static/assets/logo.jpeg`;
+      const label    = p.person_label || `Detected Person ${idx + 1}`;
+      const confPct  = p.frontal_confidence ? `${(p.frontal_confidence * 100).toFixed(0)}% Conf` : 'High Conf';
+      const framesTxt= p.frame_appearance_count ? `In ${p.frame_appearance_count} frames` : 'Primary identity';
+      const isSel    = selectedTargetId === p.face_id;
+
+      return `
+        <div class="identity-card ${isSel ? 'selected' : ''}" id="card_${p.face_id}" onclick="selectIdentity('${p.face_id}')">
+          <input type="radio" name="identityChoice" class="identity-radio" id="rad_${p.face_id}" ${isSel ? 'checked' : ''} />
+          <img src="${thumbUrl}" class="identity-thumb" alt="${label}" onerror="this.src='static/assets/logo.jpeg'" />
+          <div class="identity-name">${label}</div>
+          <div class="identity-meta">${confPct} · ${framesTxt}</div>
+          <span class="tag-badge ${idx === 0 ? 'cyan' : ''}" style="font-size:9px;">${idx === 0 ? 'Primary Subject' : 'Secondary'}</span>
+        </div>
+      `;
+    }).join('');
+  } else {
+    // Multi-Person simultaneous mode
+    grid.innerHTML = identities.map((p, idx) => {
+      const thumbUrl = p.thumbnail_url || `static/assets/logo.jpeg`;
+      const label    = p.person_label || `Detected Person ${idx + 1}`;
+      const confPct  = p.frontal_confidence ? `${(p.frontal_confidence * 100).toFixed(0)}% Conf` : 'High Conf';
+      const mapInfo  = multiTargetMappings[p.face_id] || { enabled: true, source_name: 'source_face.jpg', thumb_url: '' };
+      const isEnabled = mapInfo.enabled;
+      const isCustomSrc = mapInfo.source_name !== 'source_face.jpg';
+
+      return `
+        <div class="identity-card multi-mode ${isEnabled ? 'selected' : ''}" id="card_${p.face_id}">
+          <div class="identity-card-top">
+            <input type="checkbox" class="multi-person-check" id="chk_${p.face_id}" ${isEnabled ? 'checked' : ''} onchange="toggleMultiTarget('${p.face_id}')" style="width:16px; height:16px; accent-color:var(--accent); cursor:pointer;" />
+            <img src="${thumbUrl}" class="identity-source-thumb" style="width:42px; height:42px; border-radius:50%;" alt="${label}" onerror="this.src='static/assets/logo.jpeg'" />
+            <div style="flex:1;">
+              <div class="identity-name" style="margin-bottom:0;">${label}</div>
+              <div class="identity-meta" style="margin-bottom:0;">${confPct} · ${idx === 0 ? 'Primary' : 'Secondary'}</div>
+            </div>
+            <span class="tag-badge ${isEnabled ? 'ok' : ''}" style="font-size:9px;">${isEnabled ? 'Active Target' : 'Skipped'}</span>
+          </div>
+
+          <div class="identity-source-box">
+            <div class="identity-source-preview">
+              <img src="${mapInfo.thumb_url || 'static/assets/logo.jpeg'}" class="identity-source-thumb" alt="Assigned source" onerror="this.src='static/assets/logo.jpeg'" />
+              <div>
+                <div style="font-family:var(--mono); font-size:9.5px; color:var(--subtext);">${isCustomSrc ? 'Custom Face Assigned' : 'Default Source Face'}</div>
+                <div style="font-family:var(--mono); font-size:8.5px; color:var(--muted);">${mapInfo.source_name}</div>
+              </div>
+            </div>
+            <div>
+              <input type="file" id="aux_file_${p.face_id}" style="display:none" accept=".jpg,.jpeg,.png,.webp" onchange="uploadAuxSource('${p.face_id}', this)" />
+              <button type="button" class="btn btn-ghost btn-xs" onclick="document.getElementById('aux_file_${p.face_id}').click()" title="Upload a unique face for this target identity">
+                ${isCustomSrc ? 'Replace' : '+ Custom Face'}
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
 }
 
 function selectIdentity(faceId) {
@@ -1633,7 +1807,25 @@ async function doPreview() {
     resize_mode: resizeMode,
     restoration: restorationMode,
   });
-  if (selectedTargetId) params.set('target_face_id', selectedTargetId);
+
+  if (targetMode === 'multi') {
+    const activeMappings = {};
+    currentIdentities.forEach(p => {
+      const info = multiTargetMappings[p.face_id];
+      if (info && info.enabled) {
+        activeMappings[p.face_id] = info.source_name;
+      }
+    });
+    if (Object.keys(activeMappings).length === 0) {
+      showError('actionError', 'Please select at least one target person for multi-person swap.');
+      previewBtn.disabled = false;
+      previewBtn.textContent = '▶ Generate 4s Preview Clip';
+      return;
+    }
+    params.set('target_mappings', JSON.stringify(activeMappings));
+  } else if (selectedTargetId) {
+    params.set('target_face_id', selectedTargetId);
+  }
 
   try {
     const res = await fetch(`/preview?${params}`, { method: 'POST' });
@@ -1666,7 +1858,25 @@ async function doProcess() {
     resize_mode: resizeMode,
     restoration: restorationMode,
   });
-  if (selectedTargetId) params.set('target_face_id', selectedTargetId);
+
+  if (targetMode === 'multi') {
+    const activeMappings = {};
+    currentIdentities.forEach(p => {
+      const info = multiTargetMappings[p.face_id];
+      if (info && info.enabled) {
+        activeMappings[p.face_id] = info.source_name;
+      }
+    });
+    if (Object.keys(activeMappings).length === 0) {
+      showError('actionError', 'Please select at least one target person for multi-person swap.');
+      processBtn.disabled = false;
+      processBtn.textContent = '🚀 Launch Full Video Transformation';
+      return;
+    }
+    params.set('target_mappings', JSON.stringify(activeMappings));
+  } else if (selectedTargetId) {
+    params.set('target_face_id', selectedTargetId);
+  }
 
   try {
     const res = await fetch(`/process?${params}`, { method: 'POST' });
