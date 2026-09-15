@@ -852,6 +852,76 @@
       .header-right { flex-direction: column; align-items: flex-end; }
       .footer-bottom-inner { flex-direction: column; gap: 10px; text-align: center; }
     }
+
+    /* ── WebRTC Modal ───────────────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      background: rgba(2, 4, 10, 0.88);
+      backdrop-filter: blur(10px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+    .modal-overlay.active {
+      opacity: 1; pointer-events: auto;
+    }
+    .modal-content {
+      background: var(--surface);
+      border: 1px solid var(--border-hi);
+      border-radius: var(--r);
+      padding: 24px;
+      max-width: 860px; width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), var(--glow-cyan);
+    }
+    .modal-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    .modal-title {
+      font-size: 16px; font-weight: 700; color: var(--accent);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .modal-close-btn {
+      background: transparent; border: none; color: var(--muted);
+      font-size: 22px; cursor: pointer; line-height: 1; padding: 4px 8px;
+      border-radius: 4px; transition: color 0.15s, background 0.15s;
+    }
+    .modal-close-btn:hover {
+      color: #fff; background: rgba(255, 255, 255, 0.08);
+    }
+    .webrtc-video-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;
+    }
+    @media (max-width: 640px) {
+      .webrtc-video-grid { grid-template-columns: 1fr; }
+    }
+    .webrtc-video-box {
+      background: #000; border-radius: var(--r-sm);
+      border: 1px solid var(--border); overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .webrtc-video-box-header {
+      padding: 6px 10px; background: rgba(255, 255, 255, 0.03);
+      border-bottom: 1px solid var(--border);
+      font-family: var(--mono); font-size: 11px; color: var(--subtext);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .webrtc-video-box video {
+      width: 100%; aspect-ratio: 4/3; object-fit: cover; background: #070a12;
+      display: block;
+    }
+    .webrtc-status-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 10px; padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border); border-radius: var(--r-sm);
+      margin-bottom: 16px; font-family: var(--mono); font-size: 11.5px;
+    }
   </style>
 </head>
 
@@ -870,6 +940,9 @@
       <div class="brand-sub">Identity &amp; Quality Intelligence Engine · v2.5</div>
     </div>
     <div class="header-right">
+      <button type="button" class="btn btn-ghost btn-sm" id="btnOpenWebcam" onclick="openWebcamModal()" style="border-color:rgba(0,242,254,0.35); color:var(--accent);">
+        📹 Live WebRTC Stream
+      </button>
       <div class="status-pill" id="gpuPill">
         <span class="status-dot"></span>
         <span id="gpuLabel">Detecting Engine…</span>
@@ -1426,6 +1499,60 @@
       </div>
     </div>
   </footer>
+
+  <!-- ── WebRTC Real-Time Webcam Modal ──────────────────────────────── -->
+  <div id="webrtcModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeWebcamModal()">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>📹</span>
+          <span>PersonaForge Live WebRTC Real-Time Webcam Stream</span>
+        </div>
+        <button type="button" class="modal-close-btn" onclick="closeWebcamModal()" title="Close">&times;</button>
+      </div>
+
+      <div style="font-size:12.5px; color:var(--subtext); margin-bottom:14px; line-height:1.5;">
+        Stream zero-disk low-latency video from your local webcam directly through the GPU InSwapper-128 ONNX pipeline via WebRTC. Requires an uploaded source face for identity conditioning.
+      </div>
+
+      <div class="webrtc-video-grid">
+        <div class="webrtc-video-box">
+          <div class="webrtc-video-box-header">
+            <span>Raw Local Webcam</span>
+            <span id="webrtcLocalStatus" style="color:var(--muted);">Inactive</span>
+          </div>
+          <video id="webrtcLocalVideo" autoplay playsinline muted></video>
+        </div>
+        <div class="webrtc-video-box">
+          <div class="webrtc-video-box-header">
+            <span style="color:var(--accent);">⚡ Real-Time Swapped Stream</span>
+            <span id="webrtcRemoteStatus" style="color:var(--muted);">Waiting</span>
+          </div>
+          <video id="webrtcRemoteVideo" autoplay playsinline></video>
+        </div>
+      </div>
+
+      <div class="webrtc-status-bar">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="status-dot" id="webrtcStatusDot"></span>
+          <span id="webrtcStatusText" style="color:var(--text);">Stream Idle</span>
+        </div>
+        <div style="display:flex; gap:16px; color:var(--subtext);">
+          <span>FPS: <b id="webrtcFps" style="color:var(--accent);">-</b></span>
+          <span>Backend: <b id="webrtcBackendStatus" style="color:var(--green);">Checking…</b></span>
+          <span>Source Face: <b id="webrtcSourceStatus" style="color:var(--warn);">Not Bound</b></span>
+        </div>
+      </div>
+
+      <div id="webrtcErrorBox" style="display:none; padding:10px 14px; background:rgba(255,74,107,0.1); border:1px solid var(--border-err); border-radius:var(--r-sm); color:var(--error); font-size:12px; margin-bottom:14px; font-family:var(--mono);"></div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="closeWebcamModal()">Close</button>
+        <button type="button" class="btn btn-danger btn-sm" id="webrtcStopBtn" onclick="stopWebRTCStream()" disabled>■ Stop Stream</button>
+        <button type="button" class="btn btn-primary btn-sm" id="webrtcStartBtn" onclick="startWebRTCStream()">▶ Start Live Stream</button>
+      </div>
+    </div>
+  </div>
 
 </div>
 
@@ -2279,6 +2406,249 @@ function resetApp() {
   document.getElementById('logConsole').innerHTML = '';
   clearErrors();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── WebRTC Real-Time Stream Controller ─────────────────────────────
+let webrtcStream = null;
+let webrtcPc = null;
+let webrtcStatsTimer = null;
+
+async function checkWebRTCStatus() {
+  const backendLabel = document.getElementById('webrtcBackendStatus');
+  const sourceLabel = document.getElementById('webrtcSourceStatus');
+
+  if (sourceLabel) {
+    if (sessionId) {
+      sourceLabel.textContent = 'Bound (' + sessionId.slice(0, 8) + '…)';
+      sourceLabel.style.color = 'var(--green)';
+    } else {
+      sourceLabel.textContent = 'Not Uploaded';
+      sourceLabel.style.color = 'var(--warn)';
+    }
+  }
+
+  try {
+    const res = await fetch('/realtime/connections');
+    if (res.ok) {
+      const data = await res.json();
+      if (backendLabel) {
+        if (!data.aiortc_available) {
+          backendLabel.textContent = 'aiortc missing';
+          backendLabel.style.color = 'var(--error)';
+        } else {
+          backendLabel.textContent = 'Ready (' + data.active_connections + ' active)';
+          backendLabel.style.color = 'var(--green)';
+        }
+      }
+    }
+  } catch (err) {
+    if (backendLabel) {
+      backendLabel.textContent = 'Offline';
+      backendLabel.style.color = 'var(--error)';
+    }
+  }
+}
+
+function openWebcamModal() {
+  const modal = document.getElementById('webrtcModal');
+  if (modal) {
+    modal.style.display = 'flex';
+    requestAnimationFrame(() => modal.classList.add('active'));
+    checkWebRTCStatus();
+  }
+}
+
+function closeWebcamModal() {
+  const modal = document.getElementById('webrtcModal');
+  if (modal) {
+    modal.classList.remove('active');
+    setTimeout(() => { modal.style.display = 'none'; }, 200);
+  }
+}
+
+async function startWebRTCStream() {
+  const errorBox = document.getElementById('webrtcErrorBox');
+  const statusDot = document.getElementById('webrtcStatusDot');
+  const statusText = document.getElementById('webrtcStatusText');
+  const startBtn = document.getElementById('webrtcStartBtn');
+  const stopBtn = document.getElementById('webrtcStopBtn');
+  const localStatus = document.getElementById('webrtcLocalStatus');
+  const remoteStatus = document.getElementById('webrtcRemoteStatus');
+  const localVideo = document.getElementById('webrtcLocalVideo');
+  const remoteVideo = document.getElementById('webrtcRemoteVideo');
+
+  if (errorBox) errorBox.style.display = 'none';
+
+  if (!sessionId) {
+    if (errorBox) {
+      errorBox.textContent = '⚠ Please upload a source face image first so the engine has an identity to swap onto the live video.';
+      errorBox.style.display = 'block';
+    }
+    return;
+  }
+
+  try {
+    if (statusText) statusText.textContent = 'Requesting camera access…';
+    if (statusDot) { statusDot.className = 'status-dot'; statusDot.style.background = 'var(--warn)'; }
+    if (startBtn) startBtn.disabled = true;
+
+    // 1. Get user webcam stream
+    webrtcStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
+      audio: false
+    });
+    if (localVideo) {
+      localVideo.srcObject = webrtcStream;
+    }
+    if (localStatus) {
+      localStatus.textContent = 'Streaming';
+      localStatus.style.color = 'var(--green)';
+    }
+
+    if (statusText) statusText.textContent = 'Establishing WebRTC peer connection…';
+
+    // 2. Initialize RTCPeerConnection
+    webrtcPc = new RTCPeerConnection({
+      iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+    });
+
+    webrtcPc.onconnectionstatechange = () => {
+      if (webrtcPc && statusText && statusDot) {
+        if (webrtcPc.connectionState === 'connected') {
+          statusText.textContent = 'Connected (Real-time swap active)';
+          statusDot.style.background = 'var(--green)';
+          if (stopBtn) stopBtn.disabled = false;
+        } else if (webrtcPc.connectionState === 'failed' || webrtcPc.connectionState === 'disconnected') {
+          statusText.textContent = 'Connection ' + webrtcPc.connectionState;
+          statusDot.style.background = 'var(--error)';
+        }
+      }
+    };
+
+    webrtcPc.ontrack = (event) => {
+      if (event.streams && event.streams[0] && remoteVideo) {
+        remoteVideo.srcObject = event.streams[0];
+        if (remoteStatus) {
+          remoteStatus.textContent = 'Live Swapping';
+          remoteStatus.style.color = 'var(--accent)';
+        }
+      }
+    };
+
+    // Add local video tracks
+    webrtcStream.getTracks().forEach(track => webrtcPc.addTrack(track, webrtcStream));
+
+    // 3. Create offer and wait for ICE gathering
+    const offer = await webrtcPc.createOffer();
+    await webrtcPc.setLocalDescription(offer);
+
+    await new Promise((resolve) => {
+      if (webrtcPc.iceGatheringState === 'complete') {
+        resolve();
+      } else {
+        const checkState = () => {
+          if (webrtcPc && webrtcPc.iceGatheringState === 'complete') {
+            webrtcPc.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        };
+        webrtcPc.addEventListener('icegatheringstatechange', checkState);
+        setTimeout(resolve, 1500);
+      }
+    });
+
+    if (statusText) statusText.textContent = 'Negotiating SDP with PersonaForge engine…';
+
+    // 4. Send offer to backend
+    const response = await fetch('/realtime/offer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sdp: webrtcPc.localDescription.sdp,
+        type: webrtcPc.localDescription.type,
+        session_id: sessionId
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'HTTP ' + response.status }));
+      throw new Error(err.detail || 'WebRTC offer failed');
+    }
+
+    const answer = await response.json();
+    await webrtcPc.setRemoteDescription(new RTCSessionDescription(answer));
+
+    if (statusText) statusText.textContent = 'Live Stream Connected';
+    if (statusDot) statusDot.style.background = 'var(--green)';
+    if (stopBtn) stopBtn.disabled = false;
+
+    // 5. Start stats telemetry polling
+    if (webrtcStatsTimer) clearInterval(webrtcStatsTimer);
+    webrtcStatsTimer = setInterval(async () => {
+      try {
+        const statsRes = await fetch('/realtime/stats');
+        if (statsRes.ok) {
+          const stats = await statsRes.json();
+          const fpsEl = document.getElementById('webrtcFps');
+          if (fpsEl && stats.fps !== undefined) {
+            fpsEl.textContent = Number(stats.fps).toFixed(1);
+          }
+        }
+      } catch (_) {}
+    }, 1500);
+
+  } catch (err) {
+    console.error('WebRTC streaming error:', err);
+    if (errorBox) {
+      errorBox.textContent = 'Error: ' + (err.message || err);
+      errorBox.style.display = 'block';
+    }
+    if (statusText) statusText.textContent = 'Stream Failed';
+    if (statusDot) statusDot.style.background = 'var(--error)';
+    stopWebRTCStream();
+  }
+}
+
+async function stopWebRTCStream() {
+  const statusDot = document.getElementById('webrtcStatusDot');
+  const statusText = document.getElementById('webrtcStatusText');
+  const startBtn = document.getElementById('webrtcStartBtn');
+  const stopBtn = document.getElementById('webrtcStopBtn');
+  const localStatus = document.getElementById('webrtcLocalStatus');
+  const remoteStatus = document.getElementById('webrtcRemoteStatus');
+  const localVideo = document.getElementById('webrtcLocalVideo');
+  const remoteVideo = document.getElementById('webrtcRemoteVideo');
+  const fpsEl = document.getElementById('webrtcFps');
+
+  if (webrtcStatsTimer) {
+    clearInterval(webrtcStatsTimer);
+    webrtcStatsTimer = null;
+  }
+
+  if (webrtcStream) {
+    webrtcStream.getTracks().forEach(track => track.stop());
+    webrtcStream = null;
+  }
+  if (localVideo) localVideo.srcObject = null;
+  if (remoteVideo) remoteVideo.srcObject = null;
+
+  if (webrtcPc) {
+    try { webrtcPc.close(); } catch (_) {}
+    webrtcPc = null;
+  }
+
+  try {
+    await fetch('/realtime/stop', { method: 'POST' });
+  } catch (_) {}
+
+  if (statusText) statusText.textContent = 'Stream Stopped';
+  if (statusDot) { statusDot.className = 'status-dot'; statusDot.style.background = 'var(--muted)'; }
+  if (startBtn) startBtn.disabled = false;
+  if (stopBtn) stopBtn.disabled = true;
+  if (localStatus) { localStatus.textContent = 'Inactive'; localStatus.style.color = 'var(--muted)'; }
+  if (remoteStatus) { remoteStatus.textContent = 'Waiting'; remoteStatus.style.color = 'var(--muted)'; }
+  if (fpsEl) fpsEl.textContent = '-';
+  checkWebRTCStatus();
 }
 
 // ── Startup ────────────────────────────────────────────────────────

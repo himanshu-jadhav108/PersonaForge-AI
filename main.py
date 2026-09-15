@@ -180,6 +180,12 @@ async def lifespan(app: FastAPI):
     # Cleanup
     if hasattr(app.state, "cleanup_task"):
         app.state.cleanup_task.cancel()
+    try:
+        from backend.app.realtime.router import close_peer_connections
+
+        await close_peer_connections()
+    except Exception as e:
+        logger.debug("[lifespan] Realtime cleanup notice: %s", e)
 
 
 # ─── FastAPI App ───────────────────────────────────────────────────────────────
