@@ -27,7 +27,7 @@ class FaceSwapVideoStreamTrack(VideoStreamTrack):
         img = frame.to_ndarray(format="bgr24")
 
         # Process frame asynchronously to avoid blocking the WebRTC loop
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             # We use a thread pool for the processing to not block the asyncio loop
             processed_img = await loop.run_in_executor(None, self.processor.process_frame, img)

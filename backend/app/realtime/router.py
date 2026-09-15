@@ -49,9 +49,10 @@ async def close_peer_connections():
 
 @router.post("/offer")
 async def offer(params: OfferSchema):
-    if not AIORTC_AVAILABLE:
+    if not AIORTC_AVAILABLE or RealTimeProcessor is None or FaceSwapVideoStreamTrack is None:
         raise HTTPException(
-            status_code=503, detail="WebRTC streaming is unavailable because 'aiortc' is not installed."
+            status_code=503,
+            detail="WebRTC streaming is unavailable because required real-time dependencies are not installed.",
         )
     global global_processor
 
@@ -120,7 +121,7 @@ async def get_stats():
 async def get_active_connections():
     return {
         "active_connections": len(pcs),
-        "aiortc_available": AIORTC_AVAILABLE,
+        "aiortc_available": AIORTC_AVAILABLE and RealTimeProcessor is not None and FaceSwapVideoStreamTrack is not None,
         "is_processor_initialized": global_processor is not None,
     }
 
